@@ -1,0 +1,19 @@
+TARGETNAME=sandbox
+TARGETTYPE=DRIVER
+
+KMDF_VERSION_MAJOR=1
+
+
+TARGETLIBS=$(TARGETLIBS) $(DDK_LIB_PATH)\ntstrsafe.lib \
+                         $(DDK_LIB_PATH)\wdmsec.lib \
+			 $(IFSKIT_LIB_PATH)\fltMgr.lib
+
+C_DEFINES=$(C_DEFINES) -D_WIN2K_COMPAT_SLIST_USAGE
+
+
+SOURCES= main.c \
+	 file.c
+
+
+TARGET_DESTINATION=wdf
+
