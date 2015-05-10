@@ -1,0 +1,14 @@
+TARGETNAME=sandbox
+TARGETTYPE=DRIVER
+DRIVERTYPE=FS
+
+
+TARGETLIBS= $(TARGETLIBS) \
+            $(IFSKIT_LIB_PATH)\fltMgr.lib
+
+SOURCES=main.c \
+        file.c \
+	lpc.c  \
+	lib.c
+
+
