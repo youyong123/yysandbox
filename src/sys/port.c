@@ -1,5 +1,5 @@
 #include "main.h"
-#include "lpc.h"
+#include "port.h"
 
 
 static PFLT_PORT g_ServerPort = NULL; 
@@ -9,18 +9,17 @@ static PFLT_FILTER g_Filter = NULL;
 #define DELAY_ONE_MICROSECOND ( -10 )
 #define DELAY_ONE_MILLISECOND	( DELAY_ONE_MICROSECOND * 1000 )
 
-VOID 		port_disconnect( PVOID ConnectionCookie);
-NTSTATUS 	port_connect(PFLT_PORT ClientPort,PVOID ServerPortCookie, PVOID ConnectionContext, ULONG SizeOfContext,PVOID *ConnectionCookie);
+VOID 		PortDisconnect( PVOID ConnectionCookie);
+NTSTATUS 	PortConnect(PFLT_PORT ClientPort,PVOID ServerPortCookie, PVOID ConnectionContext, ULONG SizeOfContext,PVOID *ConnectionCookie);
 
 #ifdef ALLOC_PRAGMA
-    #pragma alloc_text(PAGE, port_connect)
-    #pragma alloc_text(PAGE, port_disconnect)
+    #pragma alloc_text(PAGE, PortConnect)
+    #pragma alloc_text(PAGE, PortDisconnect)
 #endif
 
 
-
 NTSTATUS
-port_connect(PFLT_PORT ClientPort,PVOID ServerPortCookie, PVOID ConnectionContext, ULONG SizeOfContext,PVOID *ConnectionCookie)
+PortConnect(PFLT_PORT ClientPort,PVOID ServerPortCookie, PVOID ConnectionContext, ULONG SizeOfContext,PVOID *ConnectionCookie)
 {
 	PAGED_CODE();
 
@@ -35,7 +34,7 @@ port_connect(PFLT_PORT ClientPort,PVOID ServerPortCookie, PVOID ConnectionContex
 }
 
 
-VOID port_disconnect( PVOID ConnectionCookie)
+VOID PortDisconnect( PVOID ConnectionCookie)
 {
 	UNREFERENCED_PARAMETER(ConnectionCookie);
 	PAGED_CODE();
@@ -75,8 +74,8 @@ NTSTATUS InitPortComm(PWCHAR port_name, PFLT_FILTER filter)
 			&g_ServerPort,
 			&oa,
 			NULL,
-			(PFLT_CONNECT_NOTIFY)port_connect,
-			(PFLT_DISCONNECT_NOTIFY)port_disconnect,
+			(PFLT_CONNECT_NOTIFY)PortConnect,
+			(PFLT_DISCONNECT_NOTIFY)PortDisconnect,
 			NULL,
 			1);
 		FltFreeSecurityDescriptor(sd);

@@ -8,7 +8,8 @@ TARGETLIBS= $(TARGETLIBS) \
 
 SOURCES=main.c \
         file.c \
-	lpc.c  \
-	lib.c
+	port.c \
+	lib.c  \
+	sblist.c
 
 

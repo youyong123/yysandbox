@@ -5,10 +5,10 @@ fn_ZwQueryInformationProcess	g_ZwQueryInformationProcess = NULL;
 fn_NtQueryInformationThread		g_ZwQueryInformationThread = NULL;
 fn_IoReplaceFileObjectName		g_IoReplaceFileObjectName = NULL;
 
-VOID
-SleepImp (__int64 ReqInterval)
+VOID SleepImp (__int64 ReqInterval)
 {
 	LARGE_INTEGER	Interval;
+	PAGED_CODE();
 	*(__int64*)&Interval=-(ReqInterval*10000000L);
 	KeDelayExecutionThread( KernelMode, FALSE, &Interval );
 }
@@ -103,6 +103,8 @@ ReplaceFileObjectName (
 
 NTSTATUS InitLib()
 {
+	PAGED_CODE();
+
 	if (NULL == g_ZwQueryInformationProcess)
 	{
 		UNICODE_STRING routineName;
@@ -185,7 +187,7 @@ FltIsFileExist(
 	HANDLE					hFile;
 	IO_STATUS_BLOCK			ioStatus;
 
-	
+	PAGED_CODE();
 	if(pFilter == NULL || pInstance == NULL || pFileName == NULL)
 	{
 		return FALSE;
@@ -231,6 +233,8 @@ FORCEINLINE BOOLEAN  IsFileExist(PUNICODE_STRING pPath)
 	OBJECT_ATTRIBUTES		attributes;
 	FILE_NETWORK_OPEN_INFORMATION  FileInformation;
 
+	PAGED_CODE();
+
 	InitializeObjectAttributes(&attributes, pPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
 
 	status = ZwQueryFullAttributesFile(&attributes, &FileInformation);
@@ -252,6 +256,8 @@ RedirectFile(
 	PFILE_OBJECT		pFileObject;
 	NTSTATUS			status = STATUS_SUCCESS;
 	
+	PAGED_CODE();
+
 	pFileObject= Data->Iopb->TargetFileObject;
 	if(pFileObject == NULL)
 	{

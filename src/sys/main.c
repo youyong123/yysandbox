@@ -1,5 +1,7 @@
 #include "main.h"
 #include "file.h"
+#include "lib.h"
+#include "sblist.h"
 #include <Strsafe.h>
 
 DRIVER_INITIALIZE 	DriverEntry;
@@ -74,6 +76,9 @@ NTSTATUS DispatchControl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 	
 	switch (ioControlCode)
 	{
+	case IOCTL_SET_SANDBOX_PATH:
+		status = SbSetSandBoxPath(ioBuf,inBufLength);
+		break;
 	default:
 		break;
 	}
@@ -90,6 +95,7 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject)
 {
 	UNICODE_STRING deviceDosName;
 	PAGED_CODE();
+	SbUnInitProcessList();
 	if (g_DeviceObj)
 	{
 		IoUnregisterShutdownNotification(g_DeviceObj);
@@ -122,12 +128,22 @@ DriverEntry (
 	BOOLEAN bNeedToUninitMinifilter = FALSE;
 	BOOLEAN bNeedToUninitProcmon = FALSE;
 	BOOLEAN bNeedToUninitRegmon = FALSE;
+	BOOLEAN bNeedToUninitProcessList = FALSE;
 	UNICODE_STRING  deviceName = {0};
 	UNICODE_STRING  deviceDosName = {0};
-	int nIndex = 0;
+	int				nIndex = 0;
 
 	UNREFERENCED_PARAMETER( RegistryPath );
 	
+	status = InitLib();
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
+
+	SbInitProcessList();
+	bNeedToUninitProcessList = TRUE;
+
 #ifdef DBG
 	__debugbreak();
 #endif
@@ -176,6 +192,11 @@ DriverEntry (
 
     return status;
 err_ret:
+
+	if (bNeedToUninitProcessList)
+	{
+		SbUnInitProcessList();
+	}
 
 	if (bNeedToDelSym)
 	{
