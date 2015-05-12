@@ -46,7 +46,7 @@ VOID port_disconnect( PVOID ConnectionCookie)
 	}
 }
 
-void uninit_lpc()
+void UnInitPortComm()
 {
 	if (g_ServerPort)
 	{
@@ -57,7 +57,7 @@ void uninit_lpc()
 
 
 
-NTSTATUS init_lpc(PWCHAR port_name, PFLT_FILTER filter)
+NTSTATUS InitPortComm(PWCHAR port_name, PFLT_FILTER filter)
 {
 	OBJECT_ATTRIBUTES		oa;
 	UNICODE_STRING			uniString;

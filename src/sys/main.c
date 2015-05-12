@@ -3,36 +3,36 @@
 #include <Strsafe.h>
 
 DRIVER_INITIALIZE 	DriverEntry;
-DRIVER_DISPATCH 	dispatch_pass;
-DRIVER_UNLOAD 		driver_unload;
-DRIVER_DISPATCH 	dispatch_create;
-DRIVER_DISPATCH 	dispatch_close;
-DRIVER_DISPATCH 	dispatch_ictl;
+DRIVER_DISPATCH 	DispatchPass;
+DRIVER_UNLOAD 		DriverUnload;
+DRIVER_DISPATCH 	DispatchCreate;
+DRIVER_DISPATCH 	DispatchClose;
+DRIVER_DISPATCH 	DispatchControl;
 
 
 NTSTATUS 	DriverEntry (PDRIVER_OBJECT DriverObject,PUNICODE_STRING RegistryPath);
-VOID 		driver_unload(PDRIVER_OBJECT DriverObject);
-NTSTATUS 	dispatch_create(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
-NTSTATUS 	dispatch_close(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
-NTSTATUS 	dispatch_ictl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
+VOID 		DriverUnload(PDRIVER_OBJECT DriverObject);
+NTSTATUS 	DispatchCreate(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
+NTSTATUS 	DispatchClose(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
+NTSTATUS 	DispatchControl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
 
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text(INIT, DriverEntry)
-#pragma alloc_text(PAGE, driver_unload)
-#pragma alloc_text(PAGE, dispatch_create)
-#pragma alloc_text(PAGE, dispatch_close)
-#pragma alloc_text(PAGE, dispatch_ictl)
+#pragma alloc_text(PAGE, DriverUnload)
+#pragma alloc_text(PAGE, DispatchCreate)
+#pragma alloc_text(PAGE, DispatchClose)
+#pragma alloc_text(PAGE, DispatchControl)
 #endif
 
 
-PDRIVER_OBJECT					g_driver_obj = NULL;
-PDEVICE_OBJECT					g_device_obj = NULL;
-WCHAR							g_symbol_name[MAXNAMELEN];
-WCHAR							g_device_name[MAXNAMELEN];
-WCHAR							g_port_name[MAXNAMELEN];
+PDRIVER_OBJECT					g_DriverObj = NULL;
+PDEVICE_OBJECT					g_DeviceObj = NULL;
+WCHAR							g_SymbolName[MAXNAMELEN];
+WCHAR							g_DeviceName[MAXNAMELEN];
+WCHAR							g_PortName[MAXNAMELEN];
 
-NTSTATUS dispatch_create(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
+NTSTATUS DispatchCreate(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 	PAGED_CODE();
@@ -43,7 +43,7 @@ NTSTATUS dispatch_create(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 	return status;
 }
 
-NTSTATUS dispatch_close(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
+NTSTATUS DispatchClose(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 	PAGED_CODE();
@@ -54,7 +54,7 @@ NTSTATUS dispatch_close(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 	return status;
 }
 
-NTSTATUS dispatch_ictl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
+NTSTATUS DispatchControl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 {
 
 	NTSTATUS			status = STATUS_SUCCESS;
@@ -86,21 +86,21 @@ NTSTATUS dispatch_ictl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 
 
 
-VOID driver_unload(PDRIVER_OBJECT DriverObject)
+VOID DriverUnload(PDRIVER_OBJECT DriverObject)
 {
 	UNICODE_STRING deviceDosName;
 	PAGED_CODE();
-	if (g_device_obj)
+	if (g_DeviceObj)
 	{
-		IoUnregisterShutdownNotification(g_device_obj);
-		IoDeleteDevice(g_device_obj);
-		g_device_obj = NULL;
+		IoUnregisterShutdownNotification(g_DeviceObj);
+		IoDeleteDevice(g_DeviceObj);
+		g_DeviceObj = NULL;
 	}
-	RtlInitUnicodeString(&deviceDosName, g_symbol_name);
+	RtlInitUnicodeString(&deviceDosName, g_SymbolName);
 	IoDeleteSymbolicLink(&deviceDosName);
 }
 
-NTSTATUS dispatch_pass(PDEVICE_OBJECT DeviceObject, PIRP Irp)
+NTSTATUS DispatchPass(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
 	Irp->IoStatus.Information = 0;
 	Irp->IoStatus.Status = STATUS_SUCCESS;
@@ -132,33 +132,33 @@ DriverEntry (
 	__debugbreak();
 #endif
 
-	g_driver_obj = DriverObject;
+	g_DriverObj = DriverObject;
 
 
 	for (; nIndex < IRP_MJ_MAXIMUM_FUNCTION; ++nIndex)
 	{
-		DriverObject->MajorFunction[nIndex] = dispatch_pass;
+		DriverObject->MajorFunction[nIndex] = DispatchPass;
 	}
-	DriverObject->DriverUnload = driver_unload;
-	DriverObject->MajorFunction[IRP_MJ_CREATE] = dispatch_create;
-	DriverObject->MajorFunction[IRP_MJ_CLOSE] = dispatch_close;
-	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = dispatch_ictl;
+	DriverObject->DriverUnload = DriverUnload;
+	DriverObject->MajorFunction[IRP_MJ_CREATE] = DispatchCreate;
+	DriverObject->MajorFunction[IRP_MJ_CLOSE] = DispatchClose;
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = DispatchControl;
 
-	RtlInitUnicodeString(&deviceName, g_device_name);
+	RtlInitUnicodeString(&deviceName, g_DeviceName);
 	status = IoCreateDevice(DriverObject,
 		0,
 		&deviceName,
 		FILE_DEVICE_NETWORK,
 		0,
 		FALSE,
-		&g_device_obj);
+		&g_DeviceObj);
 	if (!NT_SUCCESS(status))
 	{
 		goto err_ret;
 	}
 	bNeedToDelDevice = TRUE;
 
-	RtlInitUnicodeString(&deviceDosName, g_symbol_name);
+	RtlInitUnicodeString(&deviceDosName, g_SymbolName);
 	status = IoCreateSymbolicLink(&deviceDosName, &deviceName);
 	if (!NT_SUCCESS(status))
 	{
@@ -167,7 +167,7 @@ DriverEntry (
 	}
 
 	bNeedToDelSym = TRUE;
-	status = sw_init_minifliter(DriverObject);
+	status = SbInitMinifilter(DriverObject);
 	if (!NT_SUCCESS(status))
 	{
 		goto err_ret;
@@ -179,18 +179,18 @@ err_ret:
 
 	if (bNeedToDelSym)
 	{
-		RtlInitUnicodeString(&deviceDosName, g_symbol_name);
+		RtlInitUnicodeString(&deviceDosName, g_SymbolName);
 		IoDeleteSymbolicLink(&deviceDosName);
 	}
 
 	if (bNeedToDelDevice)
 	{
-		IoDeleteDevice(g_device_obj);
-		g_device_obj = NULL;
+		IoDeleteDevice(g_DeviceObj);
+		g_DeviceObj = NULL;
 	}
 	if (bNeedToUninitMinifilter)
 	{
-		sw_uninit_minifliter(DriverObject);
+		SbUninitMinifilter(DriverObject);
 	}
 	return status;
 }

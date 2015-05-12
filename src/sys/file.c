@@ -7,16 +7,16 @@
 static PFLT_FILTER			g_FilterHandle = NULL;
 
 
-CONST FLT_OPERATION_REGISTRATION g_callbacks[] = 
+CONST FLT_OPERATION_REGISTRATION g_Callbacks[] = 
 {
 	{ IRP_MJ_CREATE,
 	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO ,
-	(PFLT_PRE_OPERATION_CALLBACK)sw_pre_create_callback,
+	(PFLT_PRE_OPERATION_CALLBACK)SbPreCreateCallback,
 	NULL},
 
 	{ IRP_MJ_SET_INFORMATION,
 	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
-	(PFLT_PRE_OPERATION_CALLBACK)sw_pre_setinfo_callback,
+	(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
 	NULL},
 
 	{ IRP_MJ_OPERATION_END }
@@ -31,9 +31,9 @@ CONST FLT_REGISTRATION g_FilterRegistration = {
 	FLT_REGISTRATION_VERSION,           //  Version
 	0,                                  //  Flags
 	NULL,                               //  Context
-	g_callbacks,                        //  Operation g_callbacks
-	(PFLT_FILTER_UNLOAD_CALLBACK)sw_unload,                          //  MiniFilterUnload
-	(PFLT_INSTANCE_SETUP_CALLBACK)sw_InstanceSetup,					//  InstanceSetup
+	g_Callbacks,                        //  Operation g_Callbacks
+	(PFLT_FILTER_UNLOAD_CALLBACK)SbMinifilterUnload,                          //  MiniFilterUnload
+	(PFLT_INSTANCE_SETUP_CALLBACK)SbInstanceSetup,					//  InstanceSetup
 	NULL,								//  InstanceQueryTeardown
 	NULL,								//  InstanceTeardownStart
 	NULL,								//  InstanceTeardownComplete
@@ -49,7 +49,7 @@ FORCEINLINE BOOLEAN  is_dir(PWCHAR pPath)
 }
 
 NTSTATUS
-sw_InstanceSetup (
+SbInstanceSetup (
 	__in PCFLT_RELATED_OBJECTS FltObjects,
 	__in FLT_INSTANCE_SETUP_FLAGS Flags,
 	__in DEVICE_TYPE VolumeDeviceType,
@@ -67,26 +67,26 @@ sw_InstanceSetup (
 
 
 
-NTSTATUS sw_unload(FLT_FILTER_UNLOAD_FLAGS Flags)
+NTSTATUS SbMinifilterUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
 {
 	UNICODE_STRING deviceDosName;
 	UNREFERENCED_PARAMETER(Flags);
 	PAGED_CODE();
 
-	sw_uninit_minifliter(g_driver_obj);
+	SbUninitMinifilter(g_DriverObj);
 
 
-	if (g_device_obj)
+	if (g_DeviceObj)
 	{
-		IoDeleteDevice(g_device_obj);
-		g_device_obj = NULL;
+		IoDeleteDevice(g_DeviceObj);
+		g_DeviceObj = NULL;
 	}
-	RtlInitUnicodeString(&deviceDosName, g_symbol_name);
+	RtlInitUnicodeString(&deviceDosName, g_SymbolName);
 	IoDeleteSymbolicLink(&deviceDosName);
 	return STATUS_SUCCESS;
 }
 
-FLT_PREOP_CALLBACK_STATUS sw_pre_create_callback( PFLT_CALLBACK_DATA Data,PCFLT_RELATED_OBJECTS FltObjects, PVOID *CompletionContext)
+FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_RELATED_OBJECTS FltObjects, PVOID *CompletionContext)
 {
 	PFLT_FILE_NAME_INFORMATION	nameInfo = NULL;
 	NTSTATUS					status = STATUS_SUCCESS;
@@ -157,14 +157,14 @@ RepPreCreateCleanup:
 }
 
 
-FLT_PREOP_CALLBACK_STATUS sw_pre_setinfo_callback( PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects,PVOID *CompletionContext)
+FLT_PREOP_CALLBACK_STATUS SbPreSetinfoCallback( PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects,PVOID *CompletionContext)
 {
 	NTSTATUS		status = STATUS_SUCCESS;
 	
 	return FLT_PREOP_SUCCESS_NO_CALLBACK;
 }
 
-NTSTATUS sw_init_minifliter(PDRIVER_OBJECT DriverObject)
+NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 {
 	NTSTATUS status = STATUS_UNSUCCESSFUL;
 
@@ -175,13 +175,13 @@ NTSTATUS sw_init_minifliter(PDRIVER_OBJECT DriverObject)
                                 &g_FilterHandle );
     if (NT_SUCCESS( status )) 
 	{
-		status = init_lpc(g_port_name, g_FilterHandle);
+		status = InitPortComm(g_PortName, g_FilterHandle);
 		if (NT_SUCCESS(status))
 		{
 			status = FltStartFiltering(g_FilterHandle);
 			return status;
 		}
-		uninit_lpc();
+		UnInitPortComm();
         FltUnregisterFilter( g_FilterHandle );
 		g_FilterHandle = NULL;
     }
@@ -189,10 +189,10 @@ NTSTATUS sw_init_minifliter(PDRIVER_OBJECT DriverObject)
 	return status;
 }
 
-NTSTATUS  sw_uninit_minifliter(PDRIVER_OBJECT pDriverObj)
+NTSTATUS  SbUninitMinifilter(PDRIVER_OBJECT pDriverObj)
 {
 	PAGED_CODE();
-	uninit_lpc();
+	UnInitPortComm();
 	if (g_FilterHandle)
 	{
 		FltUnregisterFilter(g_FilterHandle);

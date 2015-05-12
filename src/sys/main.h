@@ -30,8 +30,8 @@
 #define	IOCTL_FROM_R3MSG			CTL_CODE(FILE_DEVICE_UNKNOWN, 0x1100, METHOD_BUFFERED, FILE_ANY_ACCESS) 
 
 
-extern WCHAR						g_port_name[MAXNAMELEN];
-extern WCHAR						g_device_name[MAXNAMELEN];
-extern WCHAR						g_symbol_name[MAXNAMELEN];
-extern PDRIVER_OBJECT				g_driver_obj;
-extern PDEVICE_OBJECT				g_device_obj;
+extern WCHAR						g_PortName[MAXNAMELEN];
+extern WCHAR						g_DeviceName[MAXNAMELEN];
+extern WCHAR						g_SymbolName[MAXNAMELEN];
+extern PDRIVER_OBJECT				g_DriverObj;
+extern PDEVICE_OBJECT				g_DeviceObj;

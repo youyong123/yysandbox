@@ -1,14 +1,12 @@
 #include "lib.h"
 #include "macro.h"
 
-QUERY_INFO_PROCESS				g_ZwQueryInformationProcess = NULL;
-fn_NtQueryInformationThread		g_zwQueryInformationThread = NULL;
-PReplaceFileObjectName			g_IoReplaceFileObjectName = NULL;
+fn_ZwQueryInformationProcess	g_ZwQueryInformationProcess = NULL;
+fn_NtQueryInformationThread		g_ZwQueryInformationThread = NULL;
+fn_IoReplaceFileObjectName		g_IoReplaceFileObjectName = NULL;
 
 VOID
-SleepImp (
-	__int64 ReqInterval
-	)
+SleepImp (__int64 ReqInterval)
 {
 	LARGE_INTEGER	Interval;
 	*(__int64*)&Interval=-(ReqInterval*10000000L);
@@ -16,7 +14,7 @@ SleepImp (
 }
 
 
-PWCHAR get_proc_name_by_pid(IN  HANDLE   dwProcessId, PWCHAR pPath)
+PWCHAR GetProcNameByPid(IN  HANDLE   dwProcessId, PWCHAR pPath)
 {
 	NTSTATUS Status = STATUS_UNSUCCESSFUL;
 	HANDLE hProcess;
@@ -64,64 +62,64 @@ ReplaceFileObjectName (
     __in USHORT FileNameLength
     )
 {
-    PWSTR buffer;
-    PUNICODE_STRING fileName;
-    USHORT newMaxLength;
+	PWSTR buffer;
+	PUNICODE_STRING fileName;
+	USHORT newMaxLength;
 
-    PAGED_CODE();
+	PAGED_CODE();
 
-    fileName = &FileObject->FileName;
+	fileName = &FileObject->FileName;
 
-    if (FileNameLength <= fileName->MaximumLength) 
+	if (FileNameLength <= fileName->MaximumLength) 
 	{
-        goto CopyAndReturn;
-    }
+		goto CopyAndReturn;
+	}
 
-    newMaxLength = FileNameLength;
+	newMaxLength = FileNameLength;
 
 	buffer = (PWSTR)ExAllocatePoolWithTag( PagedPool,  newMaxLength, 'LIB' );
-    if (!buffer) 
+	if (!buffer) 
 	{
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
 
-    if (fileName->Buffer != NULL) 
+	if (fileName->Buffer != NULL) 
 	{
-        ExFreePool(fileName->Buffer);
-    }
+		ExFreePool(fileName->Buffer);
+	}
 
-    fileName->Buffer = buffer;
-    fileName->MaximumLength = newMaxLength;
+	fileName->Buffer = buffer;
+	fileName->MaximumLength = newMaxLength;
 
-CopyAndReturn:
+	CopyAndReturn:
 
-    fileName->Length = FileNameLength;
-    RtlZeroMemory(fileName->Buffer, fileName->MaximumLength);
-    RtlCopyMemory(fileName->Buffer, NewFileName, FileNameLength);
+	fileName->Length = FileNameLength;
+	RtlZeroMemory(fileName->Buffer, fileName->MaximumLength);
+	RtlCopyMemory(fileName->Buffer, NewFileName, FileNameLength);
 
-    return STATUS_SUCCESS;
+	return STATUS_SUCCESS;
 }
 
 
-NTSTATUS init_lib()
+NTSTATUS InitLib()
 {
 	if (NULL == g_ZwQueryInformationProcess)
 	{
 		UNICODE_STRING routineName;
 		RtlInitUnicodeString(&routineName, L"ZwQueryInformationProcess");
-		g_ZwQueryInformationProcess =(QUERY_INFO_PROCESS)MmGetSystemRoutineAddress(&routineName);
+		g_ZwQueryInformationProcess =(fn_ZwQueryInformationProcess)MmGetSystemRoutineAddress(&routineName);
 		if (NULL == g_ZwQueryInformationProcess)
 		{
 			return STATUS_UNSUCCESSFUL;
 		}
 	}
 	
-	if (NULL == g_zwQueryInformationThread)
+	if (NULL == g_ZwQueryInformationThread)
 	{
 		UNICODE_STRING routineName;
 		RtlInitUnicodeString(&routineName, L"ZwQueryInformationThread");
-		g_zwQueryInformationThread =(fn_NtQueryInformationThread)MmGetSystemRoutineAddress(&routineName);
-		if (NULL == g_zwQueryInformationThread)
+		g_ZwQueryInformationThread =(fn_NtQueryInformationThread)MmGetSystemRoutineAddress(&routineName);
+		if (NULL == g_ZwQueryInformationThread)
 		{
 			return STATUS_UNSUCCESSFUL;
 		}
@@ -131,7 +129,7 @@ NTSTATUS init_lib()
 	{
 		UNICODE_STRING routineName;
 		RtlInitUnicodeString(&routineName, L"IoReplaceFileObjectName");
-		g_IoReplaceFileObjectName = (PReplaceFileObjectName)MmGetSystemRoutineAddress( &routineName );
+		g_IoReplaceFileObjectName = (fn_IoReplaceFileObjectName)MmGetSystemRoutineAddress( &routineName );
 		if (NULL == g_IoReplaceFileObjectName) 
 		{
 			g_IoReplaceFileObjectName = ReplaceFileObjectName;
@@ -146,16 +144,16 @@ AllocateUnicodeString (
     PUNICODE_STRING String
     )
 {
-    PAGED_CODE();
+	PAGED_CODE();
 
 	String->Buffer = (PWSTR)ExAllocatePoolWithTag( NonPagedPool, String->MaximumLength,'LIB' );
 
-    if (String->Buffer == NULL) 
+	if (String->Buffer == NULL) 
 	{
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-    String->Length = 0;
-    return STATUS_SUCCESS;
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	String->Length = 0;
+	return STATUS_SUCCESS;
 }
 
 VOID
@@ -163,20 +161,20 @@ FreeUnicodeString (
     PUNICODE_STRING String
     )
 {
-    PAGED_CODE();
+	PAGED_CODE();
 
-    if (String->Buffer) 
+	if (String->Buffer) 
 	{
-        ExFreePoolWithTag( String->Buffer, 'LIB' );
-        String->Buffer = NULL;
-    }
-    String->Length = String->MaximumLength = 0;
-    String->Buffer = NULL;
+		ExFreePoolWithTag( String->Buffer, 'LIB' );
+		String->Buffer = NULL;
+	}
+	String->Length = String->MaximumLength = 0;
+	String->Buffer = NULL;
 }
 
 
 BOOLEAN
-flt_is_file_exist(
+FltIsFileExist(
 	IN PFLT_FILTER	pFilter,
 	IN PFLT_INSTANCE	pInstance,
 	IN PUNICODE_STRING	pFileName
@@ -187,52 +185,46 @@ flt_is_file_exist(
 	HANDLE					hFile;
 	IO_STATUS_BLOCK			ioStatus;
 
-	__try
+	
+	if(pFilter == NULL || pInstance == NULL || pFileName == NULL)
 	{
-		if(pFilter == NULL || pInstance == NULL || pFileName == NULL)
-		{
-			return FALSE;
-		}
-
-		InitializeObjectAttributes(&objAttrib,
-								   pFileName,
-								   OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-								   NULL,
-								   NULL);
-
-		ntStatus = FltCreateFile(pFilter,
-								 pInstance,    
-								 &hFile,
-								 FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-								 &objAttrib,
-								 &ioStatus,
-								 0,
-								 FILE_ATTRIBUTE_NORMAL,
-								 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-								 FILE_OPEN,
-								 FILE_SYNCHRONOUS_IO_NONALERT,
-								 NULL,0,0);
-
-		if(NT_SUCCESS(ntStatus))
-		{
-			FltClose(hFile);
-			return TRUE;
-		}
-
-		if(ntStatus == STATUS_SHARING_VIOLATION )
-		{
-			return TRUE;
-		}
+		return FALSE;
 	}
-	__except(EXCEPTION_EXECUTE_HANDLER)
-	{
 
+	InitializeObjectAttributes(&objAttrib,
+								pFileName,
+								OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+								NULL,
+								NULL);
+
+	ntStatus = FltCreateFile(pFilter,
+								pInstance,    
+								&hFile,
+								FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+								&objAttrib,
+								&ioStatus,
+								0,
+								FILE_ATTRIBUTE_NORMAL,
+								FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+								FILE_OPEN,
+								FILE_SYNCHRONOUS_IO_NONALERT,
+								NULL,0,0);
+
+	if(NT_SUCCESS(ntStatus))
+	{
+		FltClose(hFile);
+		return TRUE;
+	}
+
+	if(ntStatus == STATUS_SHARING_VIOLATION )
+	{
+		return TRUE;
 	}
 	return FALSE;
 }
 
 
-FORCEINLINE BOOLEAN  is_file_exist(PUNICODE_STRING pPath)
+FORCEINLINE BOOLEAN  IsFileExist(PUNICODE_STRING pPath)
 {
 	BOOLEAN					bret = FALSE;
 	NTSTATUS				status = STATUS_SUCCESS;
@@ -250,7 +242,7 @@ FORCEINLINE BOOLEAN  is_file_exist(PUNICODE_STRING pPath)
 }
 
 NTSTATUS
-redirect_file(
+RedirectFile(
 	IN	PFLT_CALLBACK_DATA 		Data,
 	IN	PCFLT_RELATED_OBJECTS	FltObjects,
 	IN	PWSTR NewFileName,
@@ -259,29 +251,22 @@ redirect_file(
 {
 	PFILE_OBJECT		pFileObject;
 	NTSTATUS			status = STATUS_SUCCESS;
-
-	__try
+	
+	pFileObject= Data->Iopb->TargetFileObject;
+	if(pFileObject == NULL)
 	{
-		pFileObject= Data->Iopb->TargetFileObject;
-		if(pFileObject == NULL)
-		{
-			return STATUS_INVALID_PARAMETER;
-		}
-
-		status = g_IoReplaceFileObjectName(pFileObject,NewFileName,FileNameLength);
-		if (!NT_SUCCESS(status))
-		{
-			return STATUS_UNSUCCESSFUL;
-		}
-		Data->IoStatus.Status = STATUS_REPARSE; 
-		Data->IoStatus.Information = IO_REPARSE;
-
-		FltSetCallbackDataDirty(Data);
-	}
-	__except(EXCEPTION_EXECUTE_HANDLER)
-	{
-
+		return STATUS_INVALID_PARAMETER;
 	}
 
+	status = g_IoReplaceFileObjectName(pFileObject,NewFileName,FileNameLength);
+	if (!NT_SUCCESS(status))
+	{
+		return STATUS_UNSUCCESSFUL;
+	}
+	Data->IoStatus.Status = STATUS_REPARSE; 
+	Data->IoStatus.Information = IO_REPARSE;
+
+	FltSetCallbackDataDirty(Data);
+	
 	return STATUS_SUCCESS;
 }
