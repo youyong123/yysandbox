@@ -1,6 +1,8 @@
 #pragma once
 #include <fltKernel.h>
 
+#define		HOST_LEN			30
+#define		LONG_NAME_LEN		300
 
 typedef NTSTATUS(*fn_ZwQueryInformationProcess) (HANDLE ProcessHandle, PROCESSINFOCLASS ProcessInformationClass, PVOID ProcessInformation, ULONG ProcessInformationLength, PULONG ReturnLength);
 typedef NTSTATUS (*fn_NtQueryInformationThread)(HANDLE ThreadHandle,THREADINFOCLASS ThreadInformationClass,PVOID ThreadInformation,ULONG ThreadInformationLength,PULONG ReturnLength );
@@ -64,6 +66,8 @@ SbIsDirectory(
 	IN PFLT_INSTANCE instance, 
 	OUT BOOLEAN* directory
 	);
+
+PWCHAR GetProcFullPathById(IN  HANDLE   dwProcessId, PWCHAR pPath, PULONG pPathLen);
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text(PAGE, SleepImp)

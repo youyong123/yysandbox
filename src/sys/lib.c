@@ -1,5 +1,6 @@
 #include "lib.h"
 #include "macro.h"
+#include "UndocApi.h"
 #include <windef.h>
 
 fn_ZwQueryInformationProcess	g_ZwQueryInformationProcess = NULL;
@@ -987,4 +988,56 @@ SbIsDirectory(
 BOOLEAN	 FltIsDelFlagExist( PFLT_FILTER	pFilter,PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName)
 {
 	return TRUE;
+}
+
+PWCHAR GetProcFullPathById(IN  HANDLE   dwProcessId, PWCHAR pPath, PULONG pPathLen)
+{
+	NTSTATUS Status = STATUS_UNSUCCESSFUL;
+	HANDLE hProcess;
+	PEPROCESS pEprocess;
+	ULONG returnedLength;
+	PUNICODE_STRING imageName;
+
+	PAGED_CODE();
+
+	if (!pPathLen || !pPath)
+	{
+		return NULL;
+	}
+	*pPathLen = 0;
+
+	Status = PsLookupProcessByProcessId(dwProcessId, &pEprocess);
+	if (!NT_SUCCESS(Status))
+	{
+		pPath[0] = L'\0';
+		return NULL;
+	}
+	Status = ObOpenObjectByPointer(pEprocess, OBJ_KERNEL_HANDLE, NULL, 0, *PsProcessType, KernelMode, &hProcess);
+	if (!NT_SUCCESS(Status))
+	{
+		ObDereferenceObject(pEprocess);
+		pPath[0] = L'\0';
+		return NULL;
+	}
+	Status = ZwQueryInformationProcess(hProcess, ProcessImageFileName, pPath, LONG_NAME_LEN*sizeof(WCHAR), &returnedLength);
+	if (!NT_SUCCESS(Status) || ((PUNICODE_STRING)pPath)->Length >= LONG_NAME_LEN*sizeof(WCHAR))
+	{
+		ZwClose(hProcess);
+		ObDereferenceObject(pEprocess);
+		pPath[0] = L'\0';
+		return NULL;
+	}
+	else
+	{
+		ULONG len = 0;
+		imageName = (PUNICODE_STRING)pPath;
+		*pPathLen = imageName->Length;
+		len = imageName->Length;
+		RtlMoveMemory(pPath, imageName->Buffer, imageName->Length);
+		pPath[len / sizeof(WCHAR)] = L'\0';
+
+	}
+	ZwClose(hProcess);
+	ObDereferenceObject(pEprocess);
+	return pPath;
 }

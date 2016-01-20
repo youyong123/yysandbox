@@ -2,7 +2,7 @@
 #include "file.h"
 #include "port.h"
 #include "macro.h"
-#include "sblist.h"
+//#include "sblist.h"
 #include "lib.h"
 #include <strsafe.h>
 #include <Ntdddisk.h>
@@ -210,10 +210,10 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
-	if (!SbIsPidInList(CurrentPid))
-	{
-		return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	}
+	//if (!SbIsPidInList(CurrentPid))
+	//{
+	//	return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	//}
 
 	if (FlagOn(Data->Iopb->TargetFileObject->Flags, FO_NAMED_PIPE) || FlagOn(Data->Iopb->TargetFileObject->Flags, FO_MAILSLOT))
 	{
