@@ -2,15 +2,15 @@
 #include "file.h"
 #include "port.h"
 #include "macro.h"
-//#include "sblist.h"
 #include "lib.h"
 #include <strsafe.h>
 #include <Ntdddisk.h>
 #include <windef.h>
+#include "common.h"
 
 static PFLT_FILTER			g_FilterHandle = NULL;
-static WCHAR				g_SandBoxPath[MAXPATHLEN];
-static WCHAR				g_SandBoxVolume[MAXPATHLEN];
+static WCHAR				g_SandBoxPath[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1\\SandBox\\";
+static WCHAR				g_SandBoxVolume[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1";
 PFLT_INSTANCE				g_SbVolInstance = NULL;
 
 
@@ -55,17 +55,93 @@ FORCEINLINE BOOLEAN  is_dir(PWCHAR pPath)
 	return pPath[wcslen(pPath) - 1] == L'\\';
 }
 
+BOOLEAN ShouldSkipPre(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects)
+{
+	HANDLE						PID = PsGetCurrentProcessId();
+
+	if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
+	{
+		return TRUE;
+	}
+	if (PID == (HANDLE)4 || PID == (HANDLE)0)
+	{
+		return TRUE;
+	}
+
+	if (Data->RequestorMode == KernelMode)
+	{
+		return TRUE;
+	}
+
+	if (!FltObjects || !FltObjects->Instance || !FltObjects->FileObject)
+	{
+		return TRUE;
+	}
+
+	if (FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO) || FlagOn(Data->Iopb->IrpFlags, IRP_CLOSE_OPERATION))
+	{
+		return TRUE;
+	}
+
+	if (FlagOn(Data->Iopb->OperationFlags, SL_OPEN_PAGING_FILE) || FlagOn(Data->Iopb->TargetFileObject->Flags, FO_VOLUME_OPEN))
+	{
+		return TRUE;
+	}
+
+	if (FlagOn(FltObjects->FileObject->Flags, FO_NAMED_PIPE) || FlagOn(FltObjects->FileObject->Flags, FO_MAILSLOT))
+	{
+		return TRUE;
+	}
+	return FALSE;
+}
+
+BOOLEAN ShouldSkipPost(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects)
+{
+	HANDLE						PID = PsGetCurrentProcessId();
+
+	if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
+	{
+		return TRUE;
+	}
+	if (PID == (HANDLE)4 || PID == (HANDLE)0)
+	{
+		return TRUE;
+	}
+
+	if (Data->RequestorMode == KernelMode)
+	{
+		return TRUE;
+	}
+
+	if (!FltObjects || !FltObjects->Instance || !FltObjects->FileObject)
+	{
+		return TRUE;
+	}
+
+	if (FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO))
+	{
+		return TRUE;
+	}
+
+	if (!NT_SUCCESS(Data->IoStatus.Status) || (STATUS_REPARSE == Data->IoStatus.Status))
+	{
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
 NTSTATUS SbSetSandBoxPath(PVOID buf,ULONG len)
 {
 
 	HRESULT  ret;
 	HRESULT  ret1;
-	if (buf==NULL || len < sizeof(WCHAR)*MAXPATHLEN)
+	if (buf == NULL || len < sizeof(WCHAR)*LONG_NAME_LEN)
 	{
 		return STATUS_UNSUCCESSFUL;
 	}
-	ret = StringCbCopyNW(g_SandBoxPath,sizeof(WCHAR)*MAXPATHLEN,(WCHAR*)buf,len);
-	ret1 = StringCbCopyNW(g_SandBoxVolume,sizeof(WCHAR)*MAXPATHLEN,(WCHAR*)buf,wcslen(L"\\device\\HarddiskVolume1")*sizeof(WCHAR));
+	ret = StringCbCopyNW(g_SandBoxPath, sizeof(WCHAR)*LONG_NAME_LEN, (WCHAR*)buf, len);
+	ret1 = StringCbCopyNW(g_SandBoxVolume, sizeof(WCHAR)*LONG_NAME_LEN, (WCHAR*)buf, wcslen(L"\\device\\HarddiskVolume1")*sizeof(WCHAR));
 	if (SUCCEEDED(ret) && SUCCEEDED(ret1))
 	{
 		return STATUS_SUCCESS;
@@ -116,21 +192,18 @@ NTSTATUS SbMinifilterUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS SbConvertToSandBoxPath(
-	IN PUNICODE_STRING			pSandboxPath,
-	IN PUNICODE_STRING			pSrcName,
-	OUT PUNICODE_STRING			pDstName
-	)
+NTSTATUS SbConvertToSandBoxPath(IN PUNICODE_STRING	pSandboxPath, IN PUNICODE_STRING	pSrcName, OUT PUNICODE_STRING pDstName)
 {
 	NTSTATUS		ntStatus	= STATUS_UNSUCCESSFUL;
 	USHORT			usNameSize	= 0;
-	PBYTE			pNameBuffer = NULL;
+	PWSTR			pNameBuffer = NULL;
+	UNICODE_STRING	SrcNameDos;
 	UNICODE_STRING	ustrDevicePrefix = RTL_CONSTANT_STRING(L"\\Device\\");
-
+	WCHAR			szVolume[] = L"c\\";
 	
 	__try
 	{
-		if(pSrcName == NULL ||  pDstName == NULL || NULL == pSandboxPath) 
+		if (pSrcName == NULL || pDstName == NULL || NULL == pSandboxPath || pSrcName->Length <= 48)
 		{
 			ntStatus = STATUS_INVALID_PARAMETER;
 			__leave;
@@ -142,28 +215,41 @@ NTSTATUS SbConvertToSandBoxPath(
 			__leave;
 		}
 		
-		usNameSize = pSandboxPath->Length + pSrcName->Length - ustrDevicePrefix.Length;
+		ntStatus = ResolveNtPathToDosPath(pSrcName, &SrcNameDos);
+		if (!NT_SUCCESS(ntStatus))
+		{
+			__leave;
+		}
+		szVolume[0] = SrcNameDos.Buffer[0];
+
+		usNameSize = pSandboxPath->Length + sizeof(szVolume) + pSrcName->Length - 48 + sizeof(WCHAR);//L"\\Device\\HarddiskVolume1\\"
 		
-		pNameBuffer= (PBYTE)MyAllocateMemory(PagedPool, usNameSize);
+		pNameBuffer = (PWSTR)MyAllocateMemory(PagedPool, usNameSize);
 		if(pNameBuffer == NULL)
 		{
 			ntStatus = STATUS_INSUFFICIENT_RESOURCES;
 			__leave;
 		}	
-	
-		RtlCopyMemory(pNameBuffer, pSandboxPath->Buffer, pSandboxPath->Length);
+		
+		StringCbCopyNW(pNameBuffer, usNameSize, pSandboxPath->Buffer, pSandboxPath->Length);
+		StringCbCatW(pNameBuffer, usNameSize, szVolume);
+		StringCbCatNW(pNameBuffer, usNameSize, &pSrcName->Buffer[24], pSrcName->Length-48);
 
-		RtlCopyMemory(	pNameBuffer + pSandboxPath->Length, pSrcName->Buffer + ustrDevicePrefix.Length / sizeof(WCHAR), pSrcName->Length - ustrDevicePrefix.Length);
-
-
-		pDstName->Buffer = (PWSTR)pNameBuffer; 
+		pDstName->Buffer = pNameBuffer; 
 		pDstName->MaximumLength = pDstName->Length  = usNameSize; 
 	
 		ntStatus = STATUS_SUCCESS;
 	}
-	__except(EXCEPTION_EXECUTE_HANDLER)
+	__finally
 	{
-		ntStatus = GetExceptionCode();
+		if (SrcNameDos.Buffer)
+		{
+			ExFreePool(SrcNameDos.Buffer);
+		}
+		if (!NT_SUCCESS(ntStatus) && pNameBuffer)
+		{
+			ExFreePool(pNameBuffer);
+		}
 	}
 
 	return ntStatus;
@@ -186,55 +272,33 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	BOOLEAN						bModifyFile	= FALSE;
 	PFLT_INSTANCE				pOutVolumeInstance = NULL;
 	BOOLEAN						bDir  = FALSE;
+	WCHAR						ProcPath[LONG_NAME_LEN];
+	ULONG						Len = 0;
 
 	ASSERT( Data->Iopb->MajorFunction == IRP_MJ_CREATE );
 
 	CurrentPid = PsGetCurrentProcessId();
 
-	if (Data->RequestorMode == KernelMode)
+	if (ShouldSkipPre(Data, FltObjects))
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 
-	if ((CurrentPid == (HANDLE)4) || (CurrentPid== (HANDLE)0))
+	if (GetProcFullPathById(CurrentPid, ProcPath, &Len))
+	{
+		if (wcsistr(ProcPath,L"yyhipsTest.exe"))
+		{
+
+		}
+		else
+		{
+			return FLT_PREOP_SUCCESS_NO_CALLBACK;
+		}
+	}
+	else
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
-	if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
-	{
-		return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	}
-
-	if (!FltObjects || !FltObjects->Instance || !FltObjects->FileObject)
-	{
-		return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	}
-
-	//if (!SbIsPidInList(CurrentPid))
-	//{
-	//	return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	//}
-
-	if (FlagOn(Data->Iopb->TargetFileObject->Flags, FO_NAMED_PIPE) || FlagOn(Data->Iopb->TargetFileObject->Flags, FO_MAILSLOT))
-	{
-		return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	}
-
-	if (FlagOn(Data->Iopb->IrpFlags, IRP_CLOSE_OPERATION) || FlagOn(Data->Iopb->IrpFlags, IRP_PAGING_IO))
-	{
-		return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	}
-
-	if (FlagOn(Data->Iopb->OperationFlags, SL_OPEN_PAGING_FILE))
-	{
-		return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	}
-
-    if (FlagOn( Data->Iopb->TargetFileObject->Flags, FO_VOLUME_OPEN )) 
-	{ 
-        return FLT_PREOP_SUCCESS_NO_CALLBACK;
-    }
-
 	RtlInitUnicodeString(&usSandBoxPath, g_SandBoxPath);
 	RtlInitUnicodeString(&usSandBoxVolume, g_SandBoxVolume);
 
@@ -261,7 +325,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 		goto RepPreCreateCleanup;
     }
 
-	if(!RtlPrefixUnicodeString(&usSandBoxPath, &nameInfo->Name, TRUE))
+	if(RtlPrefixUnicodeString(&usSandBoxPath, &nameInfo->Name, TRUE))
 	{
 		goto RepPreCreateCleanup;
 	}
@@ -286,9 +350,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 					|| (OriginalDesiredAccess & FILE_WRITE_EA)
 					|| (OriginalDesiredAccess & FILE_WRITE_ATTRIBUTES));
 
-		if (FltIsFileExist(g_FilterHandle,pOutVolumeInstance,&nameInfo->Name))
+		if (FltIsFileExist(g_FilterHandle,pOutVolumeInstance,&nameInfo->Name,NULL))
 		{
-
 			if (FltIsDelFlagExist(g_FilterHandle,g_SbVolInstance,&usInnerPath))
 			{
 				if (bCreateFile)
@@ -315,7 +378,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			}
 			else
 			{
-				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath))
+				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
 				{
 					status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
 					if(NT_SUCCESS(status))
@@ -404,7 +467,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			}
 			else
 			{
-				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath))
+				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
 				{
 					status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
 					if(NT_SUCCESS(status))
@@ -467,9 +530,17 @@ FLT_PREOP_CALLBACK_STATUS SbPreSetinfoCallback( PFLT_CALLBACK_DATA Data, PCFLT_R
 NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 {
 	NTSTATUS status = STATUS_UNSUCCESSFUL;
-
 	PAGED_CODE();
-	
+	UNICODE_STRING	usSysrootNt;
+	UNICODE_STRING	usSysrootDos;
+
+	status = GetSysrootNtPath(&usSysrootNt);
+	if (NT_SUCCESS(status))
+	{
+		g_SandBoxPath[22] = usSysrootNt.Buffer[22];
+		g_SandBoxVolume[22] = usSysrootNt.Buffer[22];
+		ExFreePool(usSysrootNt.Buffer);
+	}
     status = FltRegisterFilter( DriverObject, &g_FilterRegistration, &g_FilterHandle );
     if (NT_SUCCESS( status )) 
 	{

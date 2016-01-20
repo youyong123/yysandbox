@@ -1,7 +1,6 @@
 #include "main.h"
 #include "file.h"
 #include "lib.h"
-//#include "sblist.h"
 #include <Strsafe.h>
 
 DRIVER_INITIALIZE 	DriverEntry;
@@ -30,9 +29,9 @@ NTSTATUS 	DispatchControl(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp);
 
 PDRIVER_OBJECT					g_DriverObj = NULL;
 PDEVICE_OBJECT					g_DeviceObj = NULL;
-WCHAR							g_SymbolName[MAXNAMELEN];
-WCHAR							g_DeviceName[MAXNAMELEN];
-WCHAR							g_PortName[MAXNAMELEN];
+WCHAR							g_SymbolName[SHORT_NAME_LEN];
+WCHAR							g_DeviceName[SHORT_NAME_LEN];
+WCHAR							g_PortName[SHORT_NAME_LEN];
 
 NTSTATUS DispatchCreate(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp)
 {
@@ -128,7 +127,6 @@ DriverEntry (
 	BOOLEAN bNeedToUninitMinifilter = FALSE;
 	BOOLEAN bNeedToUninitProcmon = FALSE;
 	BOOLEAN bNeedToUninitRegmon = FALSE;
-	//BOOLEAN bNeedToUninitProcessList = FALSE;
 	UNICODE_STRING  deviceName = {0};
 	UNICODE_STRING  deviceDosName = {0};
 	int				nIndex = 0;
@@ -140,9 +138,6 @@ DriverEntry (
 	{
 		return status;
 	}
-
-//	SbInitProcessList();
-//	bNeedToUninitProcessList = TRUE;
 
 #ifdef DBG
 	__debugbreak();
@@ -192,12 +187,6 @@ DriverEntry (
 
     return status;
 err_ret:
-
-	//if (bNeedToUninitProcessList)
-	//{
-	//	SbUnInitProcessList();
-	//}
-
 	if (bNeedToDelSym)
 	{
 		RtlInitUnicodeString(&deviceDosName, g_SymbolName);

@@ -1,8 +1,6 @@
 #pragma once
 #include <fltKernel.h>
 
-#define		HOST_LEN			30
-#define		LONG_NAME_LEN		300
 
 typedef NTSTATUS(*fn_ZwQueryInformationProcess) (HANDLE ProcessHandle, PROCESSINFOCLASS ProcessInformationClass, PVOID ProcessInformation, ULONG ProcessInformationLength, PULONG ReturnLength);
 typedef NTSTATUS (*fn_NtQueryInformationThread)(HANDLE ThreadHandle,THREADINFOCLASS ThreadInformationClass,PVOID ThreadInformation,ULONG ThreadInformationLength,PULONG ReturnLength );
@@ -14,7 +12,13 @@ PWCHAR		GetProcNameByPid(IN  HANDLE   dwProcessId, PWCHAR pPath);
 NTSTATUS	InitLib();
 NTSTATUS	AllocateUnicodeString (PUNICODE_STRING String );
 VOID		FreeUnicodeString (PUNICODE_STRING String);
-BOOLEAN		FltIsFileExist( PFLT_FILTER	pFilter,PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName);
+BOOLEAN
+FltIsFileExist(
+IN PFLT_FILTER	pFilter,
+IN PFLT_INSTANCE	pInstance,
+IN PUNICODE_STRING	pFileName,
+OUT	PBOOLEAN		bDirectory
+);
 BOOLEAN		FltIsDelFlagExist( PFLT_FILTER	pFilter,PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName);
 NTSTATUS	RedirectFile(PFLT_CALLBACK_DATA Data,PCFLT_RELATED_OBJECTS	FltObjects,PWSTR NewFileName, USHORT FileNameLength);
 FORCEINLINE BOOLEAN  IsFileExist(PUNICODE_STRING pPath);
@@ -66,8 +70,6 @@ SbIsDirectory(
 	IN PFLT_INSTANCE instance, 
 	OUT BOOLEAN* directory
 	);
-
-PWCHAR GetProcFullPathById(IN  HANDLE   dwProcessId, PWCHAR pPath, PULONG pPathLen);
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text(PAGE, SleepImp)

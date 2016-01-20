@@ -1,7 +1,9 @@
 #pragma once
 
-#define  MAXPATHLEN         260        // 文件|进程|注册表最大长度
-#define  MAXNAMELEN         64         // 用户名最大长度
+//#define		MAXPATHLEN         300        // 文件|进程|注册表最大长度
+//#define		MAXNAMELEN         64         // 用户名最大长度
+#define		LONG_NAME_LEN		300
+#define		SHORT_NAME_LEN		64
 
 #define		STATUS_SB_TRY_REPARSE			0xe0000001
 #define		STATUS_SB_REPARSED				0xe0000002

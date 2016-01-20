@@ -9,6 +9,7 @@ TARGETLIBS= $(TARGETLIBS) \
 SOURCES=main.c \
         file.c \
 	port.c \
-	lib.c  
+	lib.c  \
+	common.c
 
 

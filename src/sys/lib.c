@@ -49,7 +49,7 @@ PWCHAR GetProcNameByPid(IN  HANDLE   dwProcessId, PWCHAR pPath)
 		ObDereferenceObject(pEprocess);
 		return NULL;
 	}
-	Status = g_ZwQueryInformationProcess(hProcess, ProcessImageFileName, pPath, MAXPATHLEN*sizeof(WCHAR), &returnedLength);
+	Status = g_ZwQueryInformationProcess(hProcess, ProcessImageFileName, pPath, LONG_NAME_LEN*sizeof(WCHAR), &returnedLength);
 	if (!NT_SUCCESS(Status))
 	{
 		ZwClose(hProcess);
@@ -193,13 +193,17 @@ BOOLEAN
 FltIsFileExist(
 	IN PFLT_FILTER	pFilter,
 	IN PFLT_INSTANCE	pInstance,
-	IN PUNICODE_STRING	pFileName
+	IN PUNICODE_STRING	pFileName,
+	OUT	PBOOLEAN		bDirectory
 	)
 {
 	NTSTATUS				ntStatus;
 	OBJECT_ATTRIBUTES		objAttrib;
 	HANDLE					hFile;
 	IO_STATUS_BLOCK			ioStatus;
+	FILE_BASIC_INFORMATION	fbi;
+	PFILE_OBJECT			pFileObj = NULL;
+	ULONG					retLen = 0;
 
 	PAGED_CODE();
 	if(pFilter == NULL || pInstance == NULL || pFileName == NULL)
@@ -207,27 +211,39 @@ FltIsFileExist(
 		return FALSE;
 	}
 
-	InitializeObjectAttributes(&objAttrib,
-								pFileName,
-								OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-								NULL,
-								NULL);
+	InitializeObjectAttributes(&objAttrib,pFileName,OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,NULL,NULL);
 
 	ntStatus = FltCreateFile(pFilter,
-								pInstance,    
-								&hFile,
-								FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-								&objAttrib,
-								&ioStatus,
-								0,
-								FILE_ATTRIBUTE_NORMAL,
-								FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-								FILE_OPEN,
-								FILE_SYNCHRONOUS_IO_NONALERT,
-								NULL,0,0);
+			pInstance,    
+			&hFile,
+			FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+			&objAttrib,
+			&ioStatus,
+			0,
+			FILE_ATTRIBUTE_NORMAL,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			FILE_OPEN,
+			FILE_SYNCHRONOUS_IO_NONALERT,
+			NULL,0,0);
 
 	if(NT_SUCCESS(ntStatus))
 	{
+		if (bDirectory)
+		{
+			ntStatus = ObReferenceObjectByHandle(hFile, GENERIC_READ | GENERIC_WRITE, *IoFileObjectType, KernelMode, (PVOID*)&pFileObj, NULL);
+			if (NT_SUCCESS(ntStatus))
+			{
+				ntStatus = FltQueryInformationFile(pInstance, pFileObj, &fbi, sizeof(fbi), FileBasicInformation, &retLen);
+				if (NT_SUCCESS(ntStatus))
+				{
+					if (fbi.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+					{
+						*bDirectory = TRUE;
+					}
+				}
+				ObDereferenceObject(pFileObj);
+			}
+		}
 		FltClose(hFile);
 		return TRUE;
 	}
@@ -817,73 +833,39 @@ SbDoCopyFile(
 	return ntStatus;
 }
 
-PFLT_INSTANCE 
-SbGetVolumeInstance(
-	IN PFLT_FILTER		pFilter,
-	IN PUNICODE_STRING	pVolumeName
-	)
+PFLT_INSTANCE  SbGetVolumeInstance(IN PFLT_FILTER pFilter,IN PUNICODE_STRING pVolumeName)
 {
 	NTSTATUS		ntStatus;
 	PFLT_INSTANCE	pInstance = NULL;
 	PFLT_VOLUME		pVolumeList[MAX_VOLUME_CHARS];
-	ULONG			uRet;
+	ULONG			uRet = MAX_VOLUME_CHARS;
 	UNICODE_STRING	uniName ={0};
 	ULONG 			index = 0;
-	WCHAR			wszNameBuffer[MAX_PATH] = {0};
+	WCHAR			wszNameBuffer[SHORT_NAME_LEN] = { 0 };
 
-	
-	ntStatus = FltEnumerateVolumes(pFilter,
-		NULL,
-		0,
-		&uRet);
-	if(ntStatus != STATUS_BUFFER_TOO_SMALL)
-	{
-		return NULL;
-	}
-	
-	ntStatus = FltEnumerateVolumes(pFilter,
-		pVolumeList,
-		uRet,
-		&uRet);
-	
+	ntStatus = FltEnumerateVolumes(pFilter,pVolumeList,uRet,&uRet);
 	if(!NT_SUCCESS(ntStatus))
 	{
-
 		return NULL;
 	}
-	uniName.Buffer = wszNameBuffer;
-	
-	if (uniName.Buffer == NULL)
-	{
-		for (index = 0;index< uRet; index++)
-			FltObjectDereference(pVolumeList[index]);
-		
-		return NULL;
-	}
-	
-	uniName.MaximumLength = MAX_PATH*sizeof(WCHAR);
-	
 	for (index = 0; index < uRet; index++)
 	{
 		uniName.Length = 0;
+		uniName.Buffer = wszNameBuffer;
+		uniName.MaximumLength = SHORT_NAME_LEN*sizeof(WCHAR);
 
-		ntStatus = FltGetVolumeName( pVolumeList[index],
-										&uniName,
-										NULL);
+		ntStatus = FltGetVolumeName( pVolumeList[index],&uniName,NULL);
 
-		if(!NT_SUCCESS(ntStatus))
+		if (!NT_SUCCESS(ntStatus))
+		{
 			continue;
-
-		if(RtlCompareUnicodeString(&uniName,
-									pVolumeName,
-									TRUE) != 0)
+		}
+		if (!RtlEqualUnicodeString(&uniName, pVolumeName, TRUE))
+		{
 			continue;
+		}
 		
-		ntStatus = FltGetVolumeInstanceFromName(pFilter,
-												pVolumeList[index],
-												NULL,
-												&pInstance);
-
+		ntStatus = FltGetVolumeInstanceFromName(pFilter,pVolumeList[index],NULL,&pInstance);
 		if(NT_SUCCESS(ntStatus))
 		{
 			FltObjectDereference(pInstance);
@@ -891,9 +873,10 @@ SbGetVolumeInstance(
 		}
 	}
 	
-	for (index = 0;index< uRet; index++)
+	for (index = 0; index < uRet; index++)
+	{
 		FltObjectDereference(pVolumeList[index]);
-
+	}
 	return pInstance;
 }
 
@@ -988,56 +971,4 @@ SbIsDirectory(
 BOOLEAN	 FltIsDelFlagExist( PFLT_FILTER	pFilter,PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName)
 {
 	return TRUE;
-}
-
-PWCHAR GetProcFullPathById(IN  HANDLE   dwProcessId, PWCHAR pPath, PULONG pPathLen)
-{
-	NTSTATUS Status = STATUS_UNSUCCESSFUL;
-	HANDLE hProcess;
-	PEPROCESS pEprocess;
-	ULONG returnedLength;
-	PUNICODE_STRING imageName;
-
-	PAGED_CODE();
-
-	if (!pPathLen || !pPath)
-	{
-		return NULL;
-	}
-	*pPathLen = 0;
-
-	Status = PsLookupProcessByProcessId(dwProcessId, &pEprocess);
-	if (!NT_SUCCESS(Status))
-	{
-		pPath[0] = L'\0';
-		return NULL;
-	}
-	Status = ObOpenObjectByPointer(pEprocess, OBJ_KERNEL_HANDLE, NULL, 0, *PsProcessType, KernelMode, &hProcess);
-	if (!NT_SUCCESS(Status))
-	{
-		ObDereferenceObject(pEprocess);
-		pPath[0] = L'\0';
-		return NULL;
-	}
-	Status = ZwQueryInformationProcess(hProcess, ProcessImageFileName, pPath, LONG_NAME_LEN*sizeof(WCHAR), &returnedLength);
-	if (!NT_SUCCESS(Status) || ((PUNICODE_STRING)pPath)->Length >= LONG_NAME_LEN*sizeof(WCHAR))
-	{
-		ZwClose(hProcess);
-		ObDereferenceObject(pEprocess);
-		pPath[0] = L'\0';
-		return NULL;
-	}
-	else
-	{
-		ULONG len = 0;
-		imageName = (PUNICODE_STRING)pPath;
-		*pPathLen = imageName->Length;
-		len = imageName->Length;
-		RtlMoveMemory(pPath, imageName->Buffer, imageName->Length);
-		pPath[len / sizeof(WCHAR)] = L'\0';
-
-	}
-	ZwClose(hProcess);
-	ObDereferenceObject(pEprocess);
-	return pPath;
 }
