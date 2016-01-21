@@ -230,13 +230,7 @@ NTSTATUS SbMinifilterUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
 {
 	UNREFERENCED_PARAMETER(Flags);
 	PAGED_CODE();
-	UninitMailPost();
-	UnInitPortComm();
-	if (g_FilterHandle)
-	{
-		FltUnregisterFilter(g_FilterHandle);
-		g_FilterHandle = NULL;
-	}
+	SbUninitMinifilter();
 	return STATUS_SUCCESS;
 }
 
@@ -735,7 +729,13 @@ NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 	return status;
 }
 
-void  SbUninitMinifilter(PDRIVER_OBJECT pDriverObj)
+void  SbUninitMinifilter()
 {
-
+	UninitMailPost();
+	UnInitPortComm();
+	if (g_FilterHandle)
+	{
+		FltUnregisterFilter(g_FilterHandle);
+		g_FilterHandle = NULL;
+	}
 }

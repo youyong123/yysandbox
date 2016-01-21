@@ -193,7 +193,7 @@ err_ret:
 	}
 	if (bNeedToUninitMinifilter)
 	{
-		SbUninitMinifilter(DriverObject);
+		SbUninitMinifilter();
 	}
 	
 	return status;
