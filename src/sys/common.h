@@ -13,7 +13,7 @@ IN PUNICODE_STRING	pFileName,
 OUT	PBOOLEAN		bDirectory
 );
 BOOLEAN		FltIsDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName);
-FORCEINLINE BOOLEAN  IsFileExist(PUNICODE_STRING pPath);
+
 PVOID		MyAllocateMemory(IN POOL_TYPE PoolType, IN SIZE_T	NumberOfBytes);
 
 NTSTATUS
@@ -107,7 +107,7 @@ WCHAR* ReplaceString(WCHAR* pString, WCHAR* pOldString, WCHAR* pNewString, BOOLE
 
 void PrintProcessById(HANDLE PID);
 
-BOOLEAN  IsFileExist(PUNICODE_STRING pPath);
+BOOLEAN  IsFileExist(PUNICODE_STRING pPath, OUT	PBOOLEAN bDirectory);
 
 NTSTATUS
 SbConvertToSbName(
@@ -117,4 +117,6 @@ OUT PUNICODE_STRING			pDstName,
 IN WCHAR*			pVolName
 );
 
+BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG bufferLength);
+NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIfExists, HANDLE RootDirectory);
 #endif 

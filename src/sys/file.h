@@ -9,6 +9,8 @@ NTSTATUS					SbInitMinifilter(PDRIVER_OBJECT pDriverObj);
 NTSTATUS					SbUninitMinifilter(PDRIVER_OBJECT pDriverObj);
 NTSTATUS					SbSetSandBoxPath(PVOID buf,ULONG len);
 
+void UninitMailPost(void);
+NTSTATUS InitMailPost();
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text(PAGE, SbPreCreateCallback)

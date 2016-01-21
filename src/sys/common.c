@@ -9,6 +9,7 @@
 #include <windef.h>
 
 #define MODULE_TAG 'injc'
+#define	DEL_FLAGS	L"_del"
 
 WCHAR DriveLetters[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -92,10 +93,7 @@ PVOID MyAllocateMemory(IN POOL_TYPE PoolType, IN SIZE_T	NumberOfBytes)
 }
 
 
-NTSTATUS
-AllocateUnicodeString(
-PUNICODE_STRING String
-)
+NTSTATUS AllocateUnicodeString( PUNICODE_STRING String)
 {
 	PAGED_CODE();
 
@@ -109,10 +107,7 @@ PUNICODE_STRING String
 	return STATUS_SUCCESS;
 }
 
-VOID
-FreeUnicodeString(
-PUNICODE_STRING String
-)
+VOID FreeUnicodeString(PUNICODE_STRING String)
 {
 	PAGED_CODE();
 
@@ -193,7 +188,7 @@ OUT	PBOOLEAN		bDirectory
 }
 
 
-FORCEINLINE BOOLEAN  IsFileExist(PUNICODE_STRING pPath)
+BOOLEAN  IsFileExist(PUNICODE_STRING pPath, OUT	PBOOLEAN bDirectory)
 {
 	BOOLEAN					bret = FALSE;
 	NTSTATUS				status = STATUS_SUCCESS;
@@ -207,9 +202,51 @@ FORCEINLINE BOOLEAN  IsFileExist(PUNICODE_STRING pPath)
 	status = ZwQueryFullAttributesFile(&attributes, &FileInformation);
 	if (NT_SUCCESS(status))
 	{
+		if (bDirectory)
+		{
+			if (FileInformation.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				*bDirectory = TRUE;
+			}
+		}
+		bret = TRUE;
+	}
+	if (status == STATUS_SHARING_VIOLATION)
+	{
 		bret = TRUE;
 	}
 	return bret;
+}
+
+BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG bufferLength)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL irql = KeGetCurrentIrql();
+
+	if (irql < APC_LEVEL)
+	{
+		BOOLEAN AreApcsDisabled = KeAreApcsDisabled();
+		if (AreApcsDisabled == FALSE)
+		{
+			PDEVICE_OBJECT pDiskDevObj = NULL;
+			status = FltGetDiskDeviceObject(FltObjects->Volume, &pDiskDevObj);
+			if (NT_SUCCESS(status) && pDiskDevObj)
+			{
+				UNICODE_STRING DriveLetter = { 0 };
+				status = IoVolumeDeviceToDosName(pDiskDevObj, &DriveLetter);
+				if (NT_SUCCESS(status))
+				{
+					ULONG cbToCopy = min(DriveLetter.Length, bufferLength);
+					RtlCopyMemory(pBuffer, DriveLetter.Buffer, cbToCopy);
+					ExFreePool(DriveLetter.Buffer);
+					ObDereferenceObject(pDiskDevObj);
+					return TRUE;
+				}
+				ObDereferenceObject(pDiskDevObj);
+			}
+		}
+	}
+	return FALSE;
 }
 
 
@@ -222,43 +259,7 @@ IN ULONG Length,
 IN FILE_INFORMATION_CLASS FileInformationClass,
 OUT PULONG LengthReturned OPTIONAL
 )
-
-/*++
-
-Routine Description:
-
-This routine returns the requested information about a specified file.
-The information returned is determined by the FileInformationClass that
-is specified, and it is placed into the caller's FileInformation buffer.
-
-Arguments:
-
-Instance - Supplies the Instance initiating this IO.
-
-FileObject - Supplies the file object about which the requested
-information should be returned.
-
-FileInformationClass - Specifies the type of information which should be
-returned about the file.
-
-Length - Supplies the length, in bytes, of the FileInformation buffer.
-
-FileInformation - Supplies a buffer to receive the requested information
-returned about the file.  This must be a buffer allocated from kernel
-space.
-
-LengthReturned - the number of bytes returned if the operation was
-successful.
-
-Return Value:
-
-The status returned is the final completion status of the operation.
-
---*/
-
 {
-#if (NTDDI_VERSION >= NTDDI_LONGHORN)
-
 	return FltQueryInformationFile(Instance,
 		FileObject,
 		FileInformation,
@@ -266,50 +267,6 @@ The status returned is the final completion status of the operation.
 		FileInformationClass,
 		LengthReturned
 		);
-
-#else
-
-	PFLT_CALLBACK_DATA data;
-	NTSTATUS status;
-
-	PAGED_CODE();
-
-	status = FltAllocateCallbackData(Instance, FileObject, &data);
-
-	if (!NT_SUCCESS(status)) {
-
-		return status;
-	}
-
-	//
-	//  Fill out callback data
-	//
-
-	data->Iopb->MajorFunction = IRP_MJ_QUERY_INFORMATION;
-	data->Iopb->Parameters.QueryFileInformation.FileInformationClass = FileInformationClass;
-	data->Iopb->Parameters.QueryFileInformation.Length = Length;
-	data->Iopb->Parameters.QueryFileInformation.InfoBuffer = FileInformation;
-	data->Iopb->IrpFlags = IRP_SYNCHRONOUS_API;
-
-
-	FltPerformSynchronousIo(data);
-
-	//
-	//  Return Results
-	//
-
-	status = data->IoStatus.Status;
-
-	if (NT_SUCCESS(status) &&
-		ARGUMENT_PRESENT(LengthReturned)) {
-
-		*LengthReturned = (ULONG)data->IoStatus.Information;
-	}
-
-	FltFreeCallbackData(data);
-
-	return status;
-#endif
 }
 
 
@@ -873,22 +830,37 @@ OUT BOOLEAN* directory
 
 	return ntStatus;
 }
-BOOLEAN
-FltIsFileExist(
-IN PFLT_FILTER	pFilter,
-IN PFLT_INSTANCE	pInstance,
-IN PUNICODE_STRING	pFileName,
-OUT	PBOOLEAN		bDirectory
-);
+
 BOOLEAN	 FltIsDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName)
 {
-	UNICODE_STRING	usNewName = { 0, 0, NULL };
-	WCHAR	delFlag[] = L".del";
+	UNICODE_STRING		usNewName = { 0, 0, NULL };
+	WCHAR				delFlag[] = DEL_FLAGS;
+	NTSTATUS			status;
+	BOOLEAN				bExist = FALSE;
+
 	if (NULL == pFilter || NULL == pInstance || NULL == pFileName)
 	{
 		return FALSE;
 	}
-	return TRUE;
+	
+	usNewName.MaximumLength = pFileName->Length + sizeof(delFlag);
+	status = AllocateUnicodeString(&usNewName);
+	if (NT_SUCCESS(status))
+	{
+		RtlCopyUnicodeString(&usNewName, pFileName);
+		if (usNewName.Buffer[usNewName.Length/sizeof(WCHAR)-1]==L'\\')
+		{
+			usNewName.Buffer[usNewName.Length / sizeof(WCHAR) - 1] = L'\0';
+			usNewName.Length -= sizeof(WCHAR);
+		}
+		status = RtlAppendUnicodeToString(&usNewName, delFlag);
+		if (NT_SUCCESS(status))
+		{
+			bExist = FltIsFileExist(pFilter, pInstance, &usNewName, NULL);
+		}
+	}
+	FreeUnicodeString(&usNewName);
+	return bExist;
 }
 
 BOOLEAN  AcquireResourceExclusive(__inout PERESOURCE Resource)
@@ -1680,9 +1652,7 @@ IN WCHAR*			pVolName
 			__leave;
 		}
 
-		if (RtlPrefixUnicodeString(pSandboxPath,
-			pSrcName,
-			TRUE))
+		if (RtlPrefixUnicodeString(pSandboxPath,pSrcName,TRUE))
 		{
 			ntStatus = STATUS_SB_REPARSED;
 			__leave;
@@ -1718,5 +1688,53 @@ IN WCHAR*			pVolName
 		ntStatus = GetExceptionCode();
 	}
 
+	return ntStatus;
+}
+
+NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIfExists, HANDLE RootDirectory)
+{
+	OBJECT_ATTRIBUTES 			objectAttributes = { 0 };
+	IO_STATUS_BLOCK 			iostatus = { 0 };
+	HANDLE 						hfile = NULL;
+	UNICODE_STRING 				uFile = { 0 };
+	NTSTATUS					ntStatus = 0;
+	PFILE_RENAME_INFORMATION	pFbi = NULL;
+	ULONG						fbiLen = 0;
+
+	if (NULL == szFileName || NULL == szNewFileName)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+	fbiLen = sizeof(FILE_RENAME_INFORMATION) + sizeof(WCHAR)*wcslen(szNewFileName);
+	pFbi = MyAllocateMemory(PagedPool, fbiLen);
+	if (!pFbi)
+	{
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	RtlInitUnicodeString(&uFile, szFileName);
+	InitializeObjectAttributes(&objectAttributes,&uFile,OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,NULL,NULL);
+	ntStatus = ZwCreateFile(&hfile,
+		GENERIC_READ,
+		&objectAttributes,
+		&iostatus,
+		NULL,
+		FILE_ATTRIBUTE_NORMAL,
+		0,
+		FILE_OPEN,
+		FILE_SYNCHRONOUS_IO_NONALERT,
+		NULL,
+		0);
+	if (!NT_SUCCESS(ntStatus))
+	{
+		ExFreePool(pFbi);
+		return ntStatus;
+	}
+	pFbi->ReplaceIfExists = ReplaceIfExists;
+	pFbi->RootDirectory = RootDirectory;
+	StringCchCopyW(pFbi->FileName, wcslen(szNewFileName)+sizeof(WCHAR), szNewFileName);
+	pFbi->FileNameLength = sizeof(WCHAR)*wcslen(szNewFileName);
+	ntStatus = ZwSetInformationFile(hfile,&iostatus,pFbi,fbiLen,FileRenameInformation);
+	ExFreePool(pFbi);
+	ZwClose(hfile);
 	return ntStatus;
 }

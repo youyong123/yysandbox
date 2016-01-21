@@ -93,15 +93,15 @@ VOID DriverUnload(PDRIVER_OBJECT DriverObject)
 {
 	UNICODE_STRING deviceDosName;
 	PAGED_CODE();
-//	SbUnInitProcessList();
+
 	if (g_DeviceObj)
 	{
-		IoUnregisterShutdownNotification(g_DeviceObj);
 		IoDeleteDevice(g_DeviceObj);
 		g_DeviceObj = NULL;
 	}
 	RtlInitUnicodeString(&deviceDosName, g_SymbolName);
 	IoDeleteSymbolicLink(&deviceDosName);
+	
 }
 
 NTSTATUS DispatchPass(PDEVICE_OBJECT DeviceObject, PIRP Irp)
@@ -131,12 +131,6 @@ DriverEntry (
 	int				nIndex = 0;
 
 	UNREFERENCED_PARAMETER( RegistryPath );
-	
-	//status = InitLib();
-	//if (!NT_SUCCESS(status))
-	//{
-	//	return status;
-	//}
 
 #ifdef DBG
 	__debugbreak();
@@ -201,5 +195,6 @@ err_ret:
 	{
 		SbUninitMinifilter(DriverObject);
 	}
+	
 	return status;
 }

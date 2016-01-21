@@ -6,17 +6,29 @@
 #include <Ntdddisk.h>
 #include <windef.h>
 #include "common.h"
+#include "PRODUCER_COMSUMER_MACRO.h"
 
 static PFLT_FILTER			g_FilterHandle = NULL;
 static WCHAR				g_SandBoxPath[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1\\SandBox\\";
 static WCHAR				g_SandBoxVolume[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1";
 PFLT_INSTANCE				g_SbVolInstance = NULL;
 
+
 typedef struct _PF_INSTANCE_CONTEXT
 {
 	PFLT_INSTANCE       Instance;
 	WCHAR               DriveLetter[DRIVER_LETTER_LEN];
 } PF_INSTANCE_CONTEXT;
+
+typedef struct _FILE_RENAME_NODE 
+{
+	LIST_ENTRY		listentry;
+	BOOLEAN ReplaceIfExists;
+	HANDLE RootDirectory;
+	WCHAR NewFileName[LONG_NAME_LEN];
+	WCHAR FileName[LONG_NAME_LEN];
+} FILE_RENAME_NODE, *PFILE_RENAME_NODE;
+
 
 CONST FLT_OPERATION_REGISTRATION g_Callbacks[] = 
 {
@@ -25,10 +37,10 @@ CONST FLT_OPERATION_REGISTRATION g_Callbacks[] =
 	(PFLT_PRE_OPERATION_CALLBACK)SbPreCreateCallback,
 	NULL},
 
-	//{ IRP_MJ_SET_INFORMATION,
-	//FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
-	//(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
-	//NULL},
+	{ IRP_MJ_SET_INFORMATION,
+	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
+	(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
+	NULL},
 
 	{ IRP_MJ_OPERATION_END }
 };
@@ -145,6 +157,8 @@ BOOLEAN ShouldSkipPost(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects
 	return FALSE;
 }
 
+
+
 NTSTATUS SbSetSandBoxPath(PVOID buf,ULONG len)
 {
 
@@ -165,38 +179,6 @@ NTSTATUS SbSetSandBoxPath(PVOID buf,ULONG len)
 		return STATUS_UNSUCCESSFUL;
 	}
 }
-
-BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects,PWCHAR pBuffer,ULONG bufferLength)
-{
-	NTSTATUS status = STATUS_SUCCESS;
-	KIRQL irql = KeGetCurrentIrql();
-
-	if (irql < APC_LEVEL)
-	{
-		BOOLEAN AreApcsDisabled = KeAreApcsDisabled();
-		if (AreApcsDisabled == FALSE)
-		{
-			PDEVICE_OBJECT pDiskDevObj = NULL;
-			status = FltGetDiskDeviceObject(FltObjects->Volume, &pDiskDevObj);
-			if (NT_SUCCESS(status) && pDiskDevObj)
-			{
-				UNICODE_STRING DriveLetter = { 0 };
-				status = IoVolumeDeviceToDosName(pDiskDevObj, &DriveLetter);
-				if (NT_SUCCESS(status))
-				{
-					ULONG cbToCopy = min(DriveLetter.Length, bufferLength);
-					RtlCopyMemory(pBuffer, DriveLetter.Buffer, cbToCopy);
-					ExFreePool(DriveLetter.Buffer);
-					ObDereferenceObject(pDiskDevObj);
-					return TRUE;
-				}
-				ObDereferenceObject(pDiskDevObj);
-			}
-		}
-	}
-	return FALSE;
-}
-
 
 NTSTATUS
 SbInstanceSetup (
@@ -225,11 +207,7 @@ SbInstanceSetup (
 	{
 		RtlZeroMemory(pInstCtx, sizeof(PF_INSTANCE_CONTEXT));
 		pInstCtx->Instance = FltObjects->Instance;
-
-	
 		RtlZeroMemory(pInstCtx->DriveLetter, DRIVER_LETTER_LEN*sizeof(WCHAR));
-		
-		
 		if (GetDriveLetter(FltObjects, pInstCtx->DriveLetter, DRIVER_LETTER_LEN*sizeof(WCHAR)))
 		{
 			status = FltSetInstanceContext(FltObjects->Instance,
@@ -252,23 +230,30 @@ SbInstanceSetup (
 
 NTSTATUS SbMinifilterUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
 {
-	UNICODE_STRING deviceDosName;
 	UNREFERENCED_PARAMETER(Flags);
 	PAGED_CODE();
-
-	SbUninitMinifilter(g_DriverObj);
-
-
-	if (g_DeviceObj)
+	if (g_FilterHandle)
 	{
-		IoDeleteDevice(g_DeviceObj);
-		g_DeviceObj = NULL;
+		FltUnregisterFilter(g_FilterHandle);
+		g_FilterHandle = NULL;
 	}
-	RtlInitUnicodeString(&deviceDosName, g_SymbolName);
-	IoDeleteSymbolicLink(&deviceDosName);
 	return STATUS_SUCCESS;
 }
 
+BOOLEAN ShouldSandBox(HANDLE pid)
+{
+	WCHAR						ProcPath[LONG_NAME_LEN];
+	ULONG						Len = 0;
+	BOOLEAN						b = FALSE;
+	if (GetProcFullPathById(pid, ProcPath, &Len))
+	{
+		if (wcsistr(ProcPath, L"yyhipsTest.exe"))
+		{
+			b = TRUE;
+		}
+	}
+	return b;
+}
 
 FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_RELATED_OBJECTS FltObjects, PVOID *CompletionContext)
 {
@@ -286,8 +271,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	BOOLEAN						bModifyFile	= FALSE;
 	PFLT_INSTANCE				pOutVolumeInstance = NULL;
 	BOOLEAN						bDir  = FALSE;
-	WCHAR						ProcPath[LONG_NAME_LEN];
-	ULONG						Len = 0;
+	
 	PF_INSTANCE_CONTEXT *		pInstCtx = NULL;
 	WCHAR						DriverLetter[DRIVER_LETTER_LEN] = { 0 };
 
@@ -299,23 +283,10 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
-
-	if (GetProcFullPathById(CurrentPid, ProcPath, &Len))
-	{
-		if (wcsistr(ProcPath,L"yyhipsTest.exe"))
-		{
-
-		}
-		else
-		{
-			return FLT_PREOP_SUCCESS_NO_CALLBACK;
-		}
-	}
-	else
+	if (!ShouldSandBox(CurrentPid))
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
-
 	status = FltGetInstanceContext(FltObjects->Instance, &pInstCtx);
 	if (!NT_SUCCESS(status) || pInstCtx == NULL)
 	{
@@ -379,7 +350,6 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (bCreateFile)
 				{
-					//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
 					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
@@ -443,7 +413,6 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 						}
 						else
 						{
-							//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
 							status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 							if(NT_SUCCESS(status))
 							{
@@ -495,7 +464,6 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
 				{
-					//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
 					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
@@ -512,7 +480,6 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 				{
 					if (bCreateFile)
 					{
-						//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
 						status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 						if(NT_SUCCESS(status))
 						{
@@ -555,11 +522,183 @@ RepPreCreateCleanup:
 }
 
 
+MACRO_PRODUCER_COMSUMER_DECLARE(FILE_RENAME_NODE)
+
+void Process_FILE_RENAME_NODE(FILE_RENAME_NODE* pNode)
+{
+	NTSTATUS					status = STATUS_SUCCESS;
+	status = NtRenameFile(pNode->FileName, pNode->NewFileName, pNode->ReplaceIfExists, pNode->RootDirectory);
+	if (!NT_SUCCESS(status))
+	{
+		NtRenameFile(pNode->FileName, pNode->NewFileName, pNode->ReplaceIfExists, pNode->RootDirectory);
+	}
+}
+
+void UninitMailPost(void)
+{
+	Uninit_FILE_RENAME_NODE();
+}
+
+BOOLEAN InsertMailInfo(FILE_RENAME_NODE* pMailEvent)
+{
+	return Insert_FILE_RENAME_NODE(pMailEvent);
+}
+
+NTSTATUS InitMailPost()
+{
+	return Init_FILE_RENAME_NODE();
+}
+
+FLT_PREOP_CALLBACK_STATUS ProcessRename(PUNICODE_STRING pOrgNtName, PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects)
+{
+	FILE_RENAME_NODE*			pRenameNode = NULL;
+	PFILE_RENAME_INFORMATION	pfn = NULL;
+	UNICODE_STRING				usNewFileName = { 0, 0, NULL };
+	UNICODE_STRING				usNtNewFileName = { 0, 0, NULL };
+	NTSTATUS					status = STATUS_SUCCESS;
+	UNICODE_STRING				usSandBoxPath = { 0, 0, NULL };
+	UNICODE_STRING				usDosPath = { 0, 0, NULL };
+	UNICODE_STRING				usNtPath = { 0, 0, NULL };
+	UNICODE_STRING				usDestNtPath = { 0, 0, NULL };
+	UNICODE_STRING				usDestDosPath = { 0, 0, NULL };
+	UNICODE_STRING				uDosFileName = { 0, 0, NULL };
+	FLT_PREOP_CALLBACK_STATUS	ret = FLT_PREOP_SUCCESS_NO_CALLBACK;
+
+	pfn = (PFILE_RENAME_INFORMATION)(Data->Iopb->Parameters.SetFileInformation.InfoBuffer);
+	if (pfn)
+	{
+		pRenameNode = MyAllocateMemory(PagedPool, sizeof(FILE_RENAME_NODE));
+		if (pRenameNode)
+		{
+			usDosPath.Buffer = &pfn->FileName[4];
+			usDosPath.MaximumLength = usDosPath.Length = (USHORT)pfn->FileNameLength - 4*sizeof(WCHAR);
+			RtlInitUnicodeString(&usSandBoxPath, g_SandBoxPath);
+
+			status = ResolveDosPathToNtPath(&usDosPath, &usNtPath);
+			if (NT_SUCCESS(status))
+			{
+				status = SbConvertToSbName(&usSandBoxPath, &usNtPath, &usDestNtPath, NULL);
+				if (NT_SUCCESS(status))
+				{
+					if (pfn->ReplaceIfExists || !FltIsFileExist(g_FilterHandle, FltObjects->Instance, &usDestNtPath, NULL))
+					{
+						status = ResolveNtPathToDosPath(&usDestNtPath, &usDestDosPath);
+						if (NT_SUCCESS(status))
+						{
+							status = ResolveNtPathToDosPath(pOrgNtName, &uDosFileName);
+							if (NT_SUCCESS(status))
+							{
+								StringCchCopyW(pRenameNode->NewFileName, LONG_NAME_LEN, L"\\??\\");
+								StringCchCatNW(pRenameNode->NewFileName, LONG_NAME_LEN, usDestDosPath.Buffer, usDestDosPath.Length / sizeof(WCHAR));
+
+								StringCchCopyW(pRenameNode->FileName, LONG_NAME_LEN, L"\\??\\");
+								StringCchCatNW(pRenameNode->FileName, LONG_NAME_LEN, uDosFileName.Buffer, uDosFileName.Length / sizeof(WCHAR));
+
+								pRenameNode->ReplaceIfExists = pfn->ReplaceIfExists;
+								pRenameNode->RootDirectory = pfn->RootDirectory;
+								if (InsertMailInfo(pRenameNode))
+								{
+									pRenameNode = NULL;
+									ret = FLT_PREOP_COMPLETE;
+								}
+								FreeUnicodeString(&uDosFileName);
+							}
+							FreeUnicodeString(&usDestDosPath);
+						}
+					}
+					else
+					{
+						Data->IoStatus.Status = STATUS_UNSUCCESSFUL;
+						Data->IoStatus.Information = 0;
+						ret = FLT_PREOP_COMPLETE;
+					}
+					FreeUnicodeString(&usDestNtPath);
+				}
+				FreeUnicodeString(&usNtPath);
+			}
+			if (pRenameNode)
+			{
+				ExFreePool(pRenameNode);
+				pRenameNode = NULL;
+			}
+		}
+	}
+	return ret;
+}
+
 FLT_PREOP_CALLBACK_STATUS SbPreSetinfoCallback( PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects,PVOID *CompletionContext)
 {
-	NTSTATUS		status = STATUS_SUCCESS;
-	
-	return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	NTSTATUS status;
+	PFLT_FILE_NAME_INFORMATION	pNameInfo = NULL;
+	BOOLEAN						IsDirectory = FALSE;
+	FLT_PREOP_CALLBACK_STATUS	ret = FLT_PREOP_SUCCESS_NO_CALLBACK;
+
+	UNREFERENCED_PARAMETER(CompletionContext);
+
+	if (ShouldSkipPre(Data, FltObjects))
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+	if (!ShouldSandBox(PsGetCurrentProcessId()))
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+	status = FltIsDirectory(FltObjects->FileObject, FltObjects->Instance, &IsDirectory);
+	if (IsDirectory)
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	if ((Data->Iopb->Parameters.SetFileInformation.FileInformationClass != FileDispositionInformation)
+		&& (Data->Iopb->Parameters.SetFileInformation.FileInformationClass != FileBasicInformation)
+		&& (Data->Iopb->Parameters.SetFileInformation.FileInformationClass != FileRenameInformation))
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &pNameInfo);
+	if (!NT_SUCCESS(status))
+	{
+	goto clean_ret;
+	}
+
+	status = FltParseFileNameInformation(pNameInfo);
+	if (!NT_SUCCESS(status))
+	{
+	goto clean_ret;
+	}
+
+	if (pNameInfo->Name.Length <= 48)
+	{
+	goto clean_ret;
+	}
+
+	if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileDispositionInformation &&
+		((PFILE_DISPOSITION_INFORMATION)(Data->Iopb->Parameters.SetFileInformation.InfoBuffer))->DeleteFile == TRUE)
+	{
+
+	}
+	else if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileBasicInformation)
+	{
+
+	}
+	else if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileRenameInformation)
+	{
+		ret = ProcessRename(&pNameInfo->Name, Data, FltObjects);
+	}
+	else
+	{
+		goto clean_ret;
+	}
+
+clean_ret:
+
+	if (pNameInfo)
+	{
+		FltReleaseFileNameInformation(pNameInfo);
+		pNameInfo = NULL;
+	}
+	return ret;
 }
 
 NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
@@ -568,6 +707,12 @@ NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 	PAGED_CODE();
 	UNICODE_STRING	usSysrootNt;
 	UNICODE_STRING	usSysrootDos;
+
+	status = InitMailPost();
+	if (!NT_SUCCESS(status))
+	{
+		return status;
+	}
 
 	status = GetSysrootNtPath(&usSysrootNt);
 	if (NT_SUCCESS(status))
@@ -588,6 +733,7 @@ NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 		UnInitPortComm();
         FltUnregisterFilter( g_FilterHandle );
 		g_FilterHandle = NULL;
+		UninitMailPost();
     }
 	return status;
 }
@@ -596,10 +742,6 @@ NTSTATUS  SbUninitMinifilter(PDRIVER_OBJECT pDriverObj)
 {
 	PAGED_CODE();
 	UnInitPortComm();
-	if (g_FilterHandle)
-	{
-		FltUnregisterFilter(g_FilterHandle);
-		g_FilterHandle = NULL;
-	}
+	UninitMailPost();
 	return STATUS_SUCCESS;
 }
