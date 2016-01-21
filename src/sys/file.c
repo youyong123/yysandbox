@@ -2,7 +2,6 @@
 #include "file.h"
 #include "port.h"
 #include "macro.h"
-#include "lib.h"
 #include <strsafe.h>
 #include <Ntdddisk.h>
 #include <windef.h>
@@ -13,6 +12,11 @@ static WCHAR				g_SandBoxPath[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1\\Sand
 static WCHAR				g_SandBoxVolume[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1";
 PFLT_INSTANCE				g_SbVolInstance = NULL;
 
+typedef struct _PF_INSTANCE_CONTEXT
+{
+	PFLT_INSTANCE       Instance;
+	WCHAR               DriveLetter[DRIVER_LETTER_LEN];
+} PF_INSTANCE_CONTEXT;
 
 CONST FLT_OPERATION_REGISTRATION g_Callbacks[] = 
 {
@@ -21,14 +25,24 @@ CONST FLT_OPERATION_REGISTRATION g_Callbacks[] =
 	(PFLT_PRE_OPERATION_CALLBACK)SbPreCreateCallback,
 	NULL},
 
-	{ IRP_MJ_SET_INFORMATION,
-	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
-	(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
-	NULL},
+	//{ IRP_MJ_SET_INFORMATION,
+	//FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
+	//(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
+	//NULL},
 
 	{ IRP_MJ_OPERATION_END }
 };
 
+const FLT_CONTEXT_REGISTRATION g_ContextRegistration[] = 
+{
+	{ FLT_INSTANCE_CONTEXT,
+	0,
+	NULL,
+	sizeof(PF_INSTANCE_CONTEXT),
+	'FILE' },
+
+	{ FLT_CONTEXT_END }
+};
 
 
 
@@ -37,7 +51,7 @@ CONST FLT_REGISTRATION g_FilterRegistration = {
 	sizeof(FLT_REGISTRATION),			//  Size
 	FLT_REGISTRATION_VERSION,           //  Version
 	0,                                  //  Flags
-	NULL,                               //  Context
+	g_ContextRegistration,              //  Context
 	g_Callbacks,                        //  Operation g_Callbacks
 	(PFLT_FILTER_UNLOAD_CALLBACK)SbMinifilterUnload,                          //  MiniFilterUnload
 	(PFLT_INSTANCE_SETUP_CALLBACK)SbInstanceSetup,					//  InstanceSetup
@@ -152,6 +166,36 @@ NTSTATUS SbSetSandBoxPath(PVOID buf,ULONG len)
 	}
 }
 
+BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects,PWCHAR pBuffer,ULONG bufferLength)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL irql = KeGetCurrentIrql();
+
+	if (irql < APC_LEVEL)
+	{
+		BOOLEAN AreApcsDisabled = KeAreApcsDisabled();
+		if (AreApcsDisabled == FALSE)
+		{
+			PDEVICE_OBJECT pDiskDevObj = NULL;
+			status = FltGetDiskDeviceObject(FltObjects->Volume, &pDiskDevObj);
+			if (NT_SUCCESS(status) && pDiskDevObj)
+			{
+				UNICODE_STRING DriveLetter = { 0 };
+				status = IoVolumeDeviceToDosName(pDiskDevObj, &DriveLetter);
+				if (NT_SUCCESS(status))
+				{
+					ULONG cbToCopy = min(DriveLetter.Length, bufferLength);
+					RtlCopyMemory(pBuffer, DriveLetter.Buffer, cbToCopy);
+					ExFreePool(DriveLetter.Buffer);
+					ObDereferenceObject(pDiskDevObj);
+					return TRUE;
+				}
+				ObDereferenceObject(pDiskDevObj);
+			}
+		}
+	}
+	return FALSE;
+}
 
 
 NTSTATUS
@@ -162,13 +206,46 @@ SbInstanceSetup (
 	__in FLT_FILESYSTEM_TYPE VolumeFilesystemType
 	)
 {
+	NTSTATUS				status = STATUS_SUCCESS;
+	NTSTATUS				result = STATUS_FLT_DO_NOT_ATTACH;
+	PF_INSTANCE_CONTEXT*	pInstCtx = NULL;
+
+	UNREFERENCED_PARAMETER(Flags);
+	UNREFERENCED_PARAMETER(VolumeFilesystemType);
+
 	PAGED_CODE();
 
-	if (FLT_FSTYPE_RAW == VolumeFilesystemType)
+	status = FltAllocateContext(FltObjects->Filter,
+		FLT_INSTANCE_CONTEXT,
+		sizeof(PF_INSTANCE_CONTEXT),
+		PagedPool,
+		&pInstCtx);
+
+	if (NT_SUCCESS(status) && pInstCtx)
 	{
-		return STATUS_FLT_DO_NOT_ATTACH;
+		RtlZeroMemory(pInstCtx, sizeof(PF_INSTANCE_CONTEXT));
+		pInstCtx->Instance = FltObjects->Instance;
+
+	
+		RtlZeroMemory(pInstCtx->DriveLetter, DRIVER_LETTER_LEN*sizeof(WCHAR));
+		
+		
+		if (GetDriveLetter(FltObjects, pInstCtx->DriveLetter, DRIVER_LETTER_LEN*sizeof(WCHAR)))
+		{
+			status = FltSetInstanceContext(FltObjects->Instance,
+				FLT_SET_CONTEXT_KEEP_IF_EXISTS,
+				pInstCtx,
+				NULL);
+
+			if (NT_SUCCESS(status))
+			{
+				result = STATUS_SUCCESS;
+			}
+		}
+		FltReleaseContext(pInstCtx);
 	}
-	return STATUS_SUCCESS;
+
+	return result;
 }
 
 
@@ -192,69 +269,6 @@ NTSTATUS SbMinifilterUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS SbConvertToSandBoxPath(IN PUNICODE_STRING	pSandboxPath, IN PUNICODE_STRING	pSrcName, OUT PUNICODE_STRING pDstName)
-{
-	NTSTATUS		ntStatus	= STATUS_UNSUCCESSFUL;
-	USHORT			usNameSize	= 0;
-	PWSTR			pNameBuffer = NULL;
-	UNICODE_STRING	SrcNameDos;
-	UNICODE_STRING	ustrDevicePrefix = RTL_CONSTANT_STRING(L"\\Device\\");
-	WCHAR			szVolume[] = L"c\\";
-	
-	__try
-	{
-		if (pSrcName == NULL || pDstName == NULL || NULL == pSandboxPath || pSrcName->Length <= 48)
-		{
-			ntStatus = STATUS_INVALID_PARAMETER;
-			__leave;
-		}
-
-		if(RtlPrefixUnicodeString(pSandboxPath,pSrcName,TRUE))
-		{
-			ntStatus = STATUS_SB_REPARSED;
-			__leave;
-		}
-		
-		ntStatus = ResolveNtPathToDosPath(pSrcName, &SrcNameDos);
-		if (!NT_SUCCESS(ntStatus))
-		{
-			__leave;
-		}
-		szVolume[0] = SrcNameDos.Buffer[0];
-
-		usNameSize = pSandboxPath->Length + sizeof(szVolume) + pSrcName->Length - 48 + sizeof(WCHAR);//L"\\Device\\HarddiskVolume1\\"
-		
-		pNameBuffer = (PWSTR)MyAllocateMemory(PagedPool, usNameSize);
-		if(pNameBuffer == NULL)
-		{
-			ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-			__leave;
-		}	
-		
-		StringCbCopyNW(pNameBuffer, usNameSize, pSandboxPath->Buffer, pSandboxPath->Length);
-		StringCbCatW(pNameBuffer, usNameSize, szVolume);
-		StringCbCatNW(pNameBuffer, usNameSize, &pSrcName->Buffer[24], pSrcName->Length-48);
-
-		pDstName->Buffer = pNameBuffer; 
-		pDstName->MaximumLength = pDstName->Length  = usNameSize; 
-	
-		ntStatus = STATUS_SUCCESS;
-	}
-	__finally
-	{
-		if (SrcNameDos.Buffer)
-		{
-			ExFreePool(SrcNameDos.Buffer);
-		}
-		if (!NT_SUCCESS(ntStatus) && pNameBuffer)
-		{
-			ExFreePool(pNameBuffer);
-		}
-	}
-
-	return ntStatus;
-}
-
 
 FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_RELATED_OBJECTS FltObjects, PVOID *CompletionContext)
 {
@@ -274,6 +288,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	BOOLEAN						bDir  = FALSE;
 	WCHAR						ProcPath[LONG_NAME_LEN];
 	ULONG						Len = 0;
+	PF_INSTANCE_CONTEXT *		pInstCtx = NULL;
+	WCHAR						DriverLetter[DRIVER_LETTER_LEN] = { 0 };
 
 	ASSERT( Data->Iopb->MajorFunction == IRP_MJ_CREATE );
 
@@ -299,6 +315,14 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
+
+	status = FltGetInstanceContext(FltObjects->Instance, &pInstCtx);
+	if (!NT_SUCCESS(status) || pInstCtx == NULL)
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+	StringCchCopyW(DriverLetter, DRIVER_LETTER_LEN, pInstCtx->DriveLetter);
+	FltReleaseContext(pInstCtx);
 	RtlInitUnicodeString(&usSandBoxPath, g_SandBoxPath);
 	RtlInitUnicodeString(&usSandBoxVolume, g_SandBoxVolume);
 
@@ -324,14 +348,13 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	{
 		goto RepPreCreateCleanup;
     }
-
 	if(RtlPrefixUnicodeString(&usSandBoxPath, &nameInfo->Name, TRUE))
 	{
 		goto RepPreCreateCleanup;
 	}
 	else
 	{
-		status = SbConvertToSandBoxPath(&usSandBoxPath, &nameInfo->Name, &usInnerPath);
+		status = SbConvertToSbName(&usSandBoxPath, &nameInfo->Name, &usInnerPath, DriverLetter);
 		if(!NT_SUCCESS(status))
 		{
 			Data->IoStatus.Status = status;
@@ -356,7 +379,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (bCreateFile)
 				{
-					status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+					//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
 						status = STATUS_SB_TRY_REPARSE;
@@ -380,7 +404,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
 				{
-					status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+					
+					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
 						status = STATUS_SB_TRY_REPARSE;
@@ -418,7 +443,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 						}
 						else
 						{
-							status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+							//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+							status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 							if(NT_SUCCESS(status))
 							{
 								status = STATUS_SB_TRY_REPARSE;
@@ -445,7 +471,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (bCreateFile)
 				{
-					status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
 						status = STATUS_SB_TRY_REPARSE;
@@ -469,7 +495,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
 				{
-					status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+					//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
 						status = STATUS_SB_TRY_REPARSE;
@@ -485,7 +512,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 				{
 					if (bCreateFile)
 					{
-						status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+						//status = RedirectFile(Data,FltObjects,usInnerPath.Buffer,usInnerPath.Length);
+						status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 						if(NT_SUCCESS(status))
 						{
 							status = STATUS_SB_TRY_REPARSE;
@@ -516,6 +544,13 @@ RepPreCreateCleanup:
         FltReleaseFileNameInformation( nameInfo );
     }
 	FreeUnicodeString(&usInnerPath);
+
+	if (STATUS_SB_TRY_REPARSE == status)
+	{
+		Data->IoStatus.Status = STATUS_REPARSE;
+		Data->IoStatus.Information = IO_REPARSE;
+		callbackStatus = FLT_PREOP_COMPLETE;
+	}
 	return callbackStatus;
 }
 

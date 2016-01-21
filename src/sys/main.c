@@ -1,6 +1,5 @@
 #include "main.h"
 #include "file.h"
-#include "lib.h"
 #include <Strsafe.h>
 
 DRIVER_INITIALIZE 	DriverEntry;
@@ -133,11 +132,11 @@ DriverEntry (
 
 	UNREFERENCED_PARAMETER( RegistryPath );
 	
-	status = InitLib();
-	if (!NT_SUCCESS(status))
-	{
-		return status;
-	}
+	//status = InitLib();
+	//if (!NT_SUCCESS(status))
+	//{
+	//	return status;
+	//}
 
 #ifdef DBG
 	__debugbreak();

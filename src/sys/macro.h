@@ -4,6 +4,7 @@
 //#define		MAXNAMELEN         64         // 用户名最大长度
 #define		LONG_NAME_LEN		300
 #define		SHORT_NAME_LEN		64
+#define		DRIVER_LETTER_LEN	8
 
 #define		STATUS_SB_TRY_REPARSE			0xe0000001
 #define		STATUS_SB_REPARSED				0xe0000002
