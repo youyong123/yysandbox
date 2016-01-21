@@ -1583,7 +1583,7 @@ WCHAR* ReplaceString(WCHAR* pString, WCHAR* pOldString, WCHAR* pNewString,BOOLEA
 {
 	WCHAR*		pStart = NULL;
 	WCHAR*		pReplaced = NULL;
-	WCHAR*		pRet = NULL;
+//	WCHAR*		pRet = NULL;
 	ULONG		NewLength = 0;
 
 	if (!pString || !pOldString || !pNewString || !*pString || !*pOldString || !*pNewString)
@@ -1641,8 +1641,6 @@ IN WCHAR*			pVolName
 	USHORT			usNameSize = 0;
 	char*			pNameBuffer = NULL;
 	UNICODE_STRING	ustrDevicePrefix = RTL_CONSTANT_STRING(L"\\Device\\");
-	UNICODE_STRING	ustrHardVolumeName = { 0, 0, 0 };
-	USHORT			usIndex = 0;
 
 	__try
 	{

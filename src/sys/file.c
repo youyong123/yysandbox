@@ -226,12 +226,12 @@ SbInstanceSetup (
 	return result;
 }
 
-
-
 NTSTATUS SbMinifilterUnload(FLT_FILTER_UNLOAD_FLAGS Flags)
 {
 	UNREFERENCED_PARAMETER(Flags);
 	PAGED_CODE();
+	UninitMailPost();
+	UnInitPortComm();
 	if (g_FilterHandle)
 	{
 		FltUnregisterFilter(g_FilterHandle);
@@ -265,7 +265,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	UNICODE_STRING				usSandBoxVolume = {0,0,NULL};
 	UNICODE_STRING				usInnerPath = {0,0,NULL};
 	ACCESS_MASK					OriginalDesiredAccess = Data->Iopb->Parameters.Create.SecurityContext->AccessState->OriginalDesiredAccess;
-	ULONG						CreateOptions = Data->Iopb->Parameters.Create.Options & 0x00ffffff;
+//	ULONG						CreateOptions = Data->Iopb->Parameters.Create.Options & 0x00ffffff;
 	UCHAR						CreateDisposition = (UCHAR)(((Data->Iopb->Parameters.Create.Options) >> 24) & 0xFF);
 	BOOLEAN						bCreateFile	= FALSE;
 	BOOLEAN						bModifyFile	= FALSE;
@@ -553,8 +553,6 @@ FLT_PREOP_CALLBACK_STATUS ProcessRename(PUNICODE_STRING pOrgNtName, PFLT_CALLBAC
 {
 	FILE_RENAME_NODE*			pRenameNode = NULL;
 	PFILE_RENAME_INFORMATION	pfn = NULL;
-	UNICODE_STRING				usNewFileName = { 0, 0, NULL };
-	UNICODE_STRING				usNtNewFileName = { 0, 0, NULL };
 	NTSTATUS					status = STATUS_SUCCESS;
 	UNICODE_STRING				usSandBoxPath = { 0, 0, NULL };
 	UNICODE_STRING				usDosPath = { 0, 0, NULL };
@@ -706,7 +704,6 @@ NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 	NTSTATUS status = STATUS_UNSUCCESSFUL;
 	PAGED_CODE();
 	UNICODE_STRING	usSysrootNt;
-	UNICODE_STRING	usSysrootDos;
 
 	status = InitMailPost();
 	if (!NT_SUCCESS(status))
@@ -738,10 +735,7 @@ NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 	return status;
 }
 
-NTSTATUS  SbUninitMinifilter(PDRIVER_OBJECT pDriverObj)
+void  SbUninitMinifilter(PDRIVER_OBJECT pDriverObj)
 {
-	PAGED_CODE();
-	UnInitPortComm();
-	UninitMailPost();
-	return STATUS_SUCCESS;
+
 }

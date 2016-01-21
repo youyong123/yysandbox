@@ -6,7 +6,7 @@ FLT_POSTOP_CALLBACK_STATUS	SbPostCreateCallback( PFLT_CALLBACK_DATA Data, PCFLT_
 FLT_PREOP_CALLBACK_STATUS	SbPreSetinfoCallback(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID *CompletionContext);
 NTSTATUS					SbInstanceSetup ( PCFLT_RELATED_OBJECTS FltObjects, FLT_INSTANCE_SETUP_FLAGS Flags, DEVICE_TYPE VolumeDeviceType,__in FLT_FILESYSTEM_TYPE VolumeFilesystemType);
 NTSTATUS					SbInitMinifilter(PDRIVER_OBJECT pDriverObj);
-NTSTATUS					SbUninitMinifilter(PDRIVER_OBJECT pDriverObj);
+void						SbUninitMinifilter(PDRIVER_OBJECT pDriverObj);
 NTSTATUS					SbSetSandBoxPath(PVOID buf,ULONG len);
 
 void UninitMailPost(void);

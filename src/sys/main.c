@@ -124,8 +124,8 @@ DriverEntry (
 	BOOLEAN bNeedToDelDevice = FALSE;
 	BOOLEAN bNeedToDelSym = FALSE;
 	BOOLEAN bNeedToUninitMinifilter = FALSE;
-	BOOLEAN bNeedToUninitProcmon = FALSE;
-	BOOLEAN bNeedToUninitRegmon = FALSE;
+//	BOOLEAN bNeedToUninitProcmon = FALSE;
+//	BOOLEAN bNeedToUninitRegmon = FALSE;
 	UNICODE_STRING  deviceName = {0};
 	UNICODE_STRING  deviceDosName = {0};
 	int				nIndex = 0;
