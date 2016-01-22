@@ -591,6 +591,8 @@ FLT_PREOP_CALLBACK_STATUS ProcessRename(PUNICODE_STRING pOrgNtName, PFLT_CALLBAC
 								if (InsertMailInfo(pRenameNode))
 								{
 									pRenameNode = NULL;
+									Data->IoStatus.Status = STATUS_SUCCESS;
+									Data->IoStatus.Information = 0;
 									ret = FLT_PREOP_COMPLETE;
 								}
 								FreeUnicodeString(&uDosFileName);
