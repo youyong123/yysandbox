@@ -610,6 +610,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			goto RepPreCreateCleanup;
 		}
 
+		CreateSbDirectoryByOutNtPath(g_FilterHandle, pOutVolumeInstance, g_SbVolInstance, &nameInfo->Name, &usSandBoxPath);
+
 		bCreateFile = ((CreateDisposition == FILE_CREATE) 
 					||(CreateDisposition == FILE_OPEN_IF) 
 					||(CreateDisposition == FILE_OVERWRITE_IF) 

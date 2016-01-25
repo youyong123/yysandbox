@@ -148,4 +148,14 @@ _In_opt_ PFLT_INSTANCE Instance,
 _In_ FLT_FILE_NAME_OPTIONS NameOptions,
 _Outptr_ PFLT_FILE_NAME_INFORMATION *FileNameInformation
 );
+
+NTSTATUS
+CreateSbDirectoryByOutNtPath(
+IN PFLT_FILTER		pFilter,
+IN PFLT_INSTANCE	pInstance,
+IN PFLT_INSTANCE	pSbInstance,
+IN PUNICODE_STRING	pOutPath,
+IN PUNICODE_STRING	pSandboxPath
+);
+
 #endif 

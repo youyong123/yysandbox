@@ -1822,3 +1822,96 @@ _Outptr_ PFLT_FILE_NAME_INFORMATION *FileNameInformation
 
 	return Status;
 }
+
+NTSTATUS 
+FltCreateDirectory(
+IN PFLT_FILTER		pFilter,
+IN PFLT_INSTANCE	pInstance,
+IN PUNICODE_STRING	pDirectory
+)
+{
+	OBJECT_ATTRIBUTES		objAttrib = { 0 };
+	HANDLE					hFile = NULL;
+	IO_STATUS_BLOCK 		io_status = { 0 };
+	NTSTATUS				status = 0;
+
+	if (NULL == pFilter || NULL == pInstance || NULL == pDirectory)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	InitializeObjectAttributes(&objAttrib,pDirectory,OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,NULL,NULL);
+
+	FltCreateFile(pFilter,
+		pInstance,
+		&hFile,
+		GENERIC_READ | GENERIC_WRITE,
+		&objAttrib,
+		&io_status,
+		NULL,
+		FILE_ATTRIBUTE_DIRECTORY,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		FILE_OPEN_IF,
+		FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+		NULL,
+		0,
+		0);
+	if (NT_SUCCESS(status))
+	{
+		FltClose(hFile);
+	}
+	return status;
+}
+NTSTATUS 
+CreateSbDirectoryByOutNtPath(
+IN PFLT_FILTER		pFilter,
+IN PFLT_INSTANCE	pInstance,
+IN PFLT_INSTANCE	pSbInstance,
+IN PUNICODE_STRING	pOutPath,
+IN PUNICODE_STRING	pSandboxPath
+)
+{
+	UNICODE_STRING	usPrefix;
+	UNICODE_STRING	usDirectory;
+	UNICODE_STRING	usSbDirectory;
+	BOOLEAN			bDirectory = FALSE;
+
+	if (NULL == pFilter || NULL == pInstance || NULL == pOutPath || NULL == pSbInstance || NULL == pSandboxPath)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+	RtlInitUnicodeString(&usPrefix, L"\\Device\\HarddiskVolume");
+	if (!RtlPrefixUnicodeString(&usPrefix, pOutPath, TRUE))
+	{
+		return STATUS_INVALID_PARAMETER; 
+	}
+	if (FltCreateDirectory(pFilter, pSbInstance, pSandboxPath) != STATUS_SUCCESS)
+	{
+		return STATUS_UNSUCCESSFUL;
+	}
+	for (USHORT i = usPrefix.Length / sizeof(WCHAR); i < pOutPath->Length / sizeof(WCHAR) ; i++)
+	{
+		if (pOutPath->Buffer[i] == '\\')
+		{
+			bDirectory = FALSE;
+			usDirectory.Buffer = pOutPath->Buffer;
+			usDirectory.Length = usDirectory.MaximumLength = sizeof(WCHAR)*i;
+			if (i == 23 || i == 24 || (FltIsFileExist(pFilter, pInstance, &usDirectory, &bDirectory) && bDirectory))
+			{
+				if (SbConvertToSbName(pSandboxPath,&usDirectory,&usSbDirectory,NULL)==STATUS_SUCCESS)
+				{
+					if (!FltIsFileExist(pFilter, pSbInstance, &usSbDirectory, NULL))
+					{
+						FltCreateDirectory(pFilter, pSbInstance, &usSbDirectory);
+					}
+					FreeUnicodeString(&usSbDirectory);
+				}
+			}
+			else
+			{
+				break;
+			}
+		}
+	}
+	return STATUS_SUCCESS;
+}
