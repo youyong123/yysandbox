@@ -119,4 +119,33 @@ IN WCHAR*			pVolName
 
 BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG bufferLength);
 NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIfExists, HANDLE RootDirectory);
+
+NTSTATUS
+NcCreateFileHelper(
+_In_ PFLT_FILTER Filter,
+_In_opt_ PFLT_INSTANCE Instance,
+_Out_ PHANDLE FileHandle,
+_Outptr_opt_ PFILE_OBJECT *FileObject,
+_In_ ACCESS_MASK DesiredAccess,
+_In_ POBJECT_ATTRIBUTES ObjectAttributes,
+_Out_ PIO_STATUS_BLOCK IoStatusBlock,
+_In_opt_ PLARGE_INTEGER AllocationSize,
+_In_ ULONG FileAttributes,
+_In_ ULONG ShareAccess,
+_In_ ULONG CreateDisposition,
+_In_ ULONG CreateOptions,
+_In_reads_bytes_opt_(EaLength) PVOID EaBuffer,
+_In_ ULONG EaLength,
+_In_ ULONG Flags,
+_In_opt_ PFILE_OBJECT ParentFileObject
+);
+
+NTSTATUS
+NcGetFileNameInformation(
+_In_opt_ PFLT_CALLBACK_DATA Data,
+_In_opt_ PFILE_OBJECT FileObject,
+_In_opt_ PFLT_INSTANCE Instance,
+_In_ FLT_FILE_NAME_OPTIONS NameOptions,
+_Outptr_ PFLT_FILE_NAME_INFORMATION *FileNameInformation
+);
 #endif 
