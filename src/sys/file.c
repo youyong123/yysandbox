@@ -56,10 +56,384 @@ const FLT_CONTEXT_REGISTRATION g_ContextRegistration[] =
 	{ FLT_CONTEXT_END }
 };
 
+NTSTATUS
+NcCreateFileHelper(
+_In_ PFLT_FILTER Filter,
+_In_opt_ PFLT_INSTANCE Instance,
+_Out_ PHANDLE FileHandle,
+_Outptr_opt_ PFILE_OBJECT *FileObject,
+_In_ ACCESS_MASK DesiredAccess,
+_In_ POBJECT_ATTRIBUTES ObjectAttributes,
+_Out_ PIO_STATUS_BLOCK IoStatusBlock,
+_In_opt_ PLARGE_INTEGER AllocationSize,
+_In_ ULONG FileAttributes,
+_In_ ULONG ShareAccess,
+_In_ ULONG CreateDisposition,
+_In_ ULONG CreateOptions,
+_In_reads_bytes_opt_(EaLength) PVOID EaBuffer,
+_In_ ULONG EaLength,
+_In_ ULONG Flags,
+_In_opt_ PFILE_OBJECT ParentFileObject
+)
+{
+	IO_DRIVER_CREATE_CONTEXT	DriverContext;
+	NTSTATUS					Status;
+	PAGED_CODE();
+
+	IoInitializeDriverCreateContext(&DriverContext);
+
+	if (ARGUMENT_PRESENT(ParentFileObject)) 
+	{
+		PTXN_PARAMETER_BLOCK TxnInfo;
+		TxnInfo = IoGetTransactionParameterBlock(ParentFileObject);
+		DriverContext.TxnParameters = TxnInfo;
+	}
+
+	Status = FltCreateFileEx2(Filter,
+		Instance,
+		FileHandle,
+		FileObject,
+		DesiredAccess,
+		ObjectAttributes,
+		IoStatusBlock,
+		AllocationSize,
+		FileAttributes,
+		ShareAccess,
+		CreateDisposition,
+		CreateOptions,
+		EaBuffer,
+		EaLength,
+		Flags,
+		&DriverContext);
+	return Status;
+}
 
 
-CONST FLT_REGISTRATION g_FilterRegistration = {
+NTSTATUS
+NcGetFileNameInformation(
+_In_opt_ PFLT_CALLBACK_DATA Data,
+_In_opt_ PFILE_OBJECT FileObject,
+_In_opt_ PFLT_INSTANCE Instance,
+_In_ FLT_FILE_NAME_OPTIONS NameOptions,
+_Outptr_ PFLT_FILE_NAME_INFORMATION *FileNameInformation
+)
+{
+	NTSTATUS Status;
 
+	PAGED_CODE();
+
+	FLT_ASSERT(Data || FileObject);
+
+	*FileNameInformation = NULL;
+
+	if (ARGUMENT_PRESENT(Data)) 
+	{
+		Status = FltGetFileNameInformation(Data,NameOptions,FileNameInformation);
+	}
+	else if (ARGUMENT_PRESENT(FileObject))
+	{
+		Status = FltGetFileNameInformationUnsafe(FileObject,Instance,NameOptions,FileNameInformation);
+	}
+	else 
+	{
+		Status = STATUS_INVALID_PARAMETER;
+	}
+
+	return Status;
+}
+
+NTSTATUS
+NcNormalizeNameComponentEx(
+_In_     PFLT_INSTANCE            Instance,
+_In_opt_ PFILE_OBJECT             FileObject,
+_In_     PCUNICODE_STRING         ParentDirectory,
+_In_     USHORT                   DeviceNameLength,
+_In_     PCUNICODE_STRING         Component,
+_Out_writes_bytes_(ExpandComponentNameLength) PFILE_NAMES_INFORMATION ExpandComponentName,
+_In_     ULONG                    ExpandComponentNameLength,
+_In_     FLT_NORMALIZE_NAME_FLAGS Flags,
+_Inout_ PVOID           *NormalizationContext
+)
+{
+
+	NTSTATUS Status;
+	UNICODE_STRING MungedParentPath;  // Path we are going to open for query
+	PCUNICODE_STRING MungedComponent = NULL; // File name to enumerate
+
+	IO_STATUS_BLOCK ParentStatusBlock;
+	OBJECT_ATTRIBUTES ParentAttributes;
+	HANDLE ParentHandle = 0;
+	PFILE_OBJECT ParentFileObject = NULL;
+	BOOLEAN IgnoreCase = !BooleanFlagOn(Flags, FLTFL_NORMALIZE_NAME_CASE_SENSITIVE);
+
+	PAGED_CODE();
+
+	FLT_ASSERT(IoGetTopLevelIrp() == NULL);
+
+	UNREFERENCED_PARAMETER(NormalizationContext);
+	UNREFERENCED_PARAMETER(DeviceNameLength);
+	UNREFERENCED_PARAMETER(FileObject);
+
+
+	MungedParentPath = *ParentDirectory;
+	
+	MungedComponent = Component;
+
+	InitializeObjectAttributes(&ParentAttributes,
+		&MungedParentPath,
+		OBJ_KERNEL_HANDLE | (IgnoreCase ? OBJ_CASE_INSENSITIVE : 0),
+		NULL,
+		NULL);
+
+	Status = NcCreateFileHelper(g_FilterHandle,
+		Instance,
+		&ParentHandle,
+		&ParentFileObject,
+		FILE_LIST_DIRECTORY | FILE_TRAVERSE,
+		&ParentAttributes,
+		&ParentStatusBlock,
+		0,
+		FILE_ATTRIBUTE_NORMAL,
+		0,
+		FILE_OPEN,
+		FILE_DIRECTORY_FILE,
+		NULL,
+		0,
+		IO_IGNORE_SHARE_ACCESS_CHECK,
+		FileObject);
+
+	if (!NT_SUCCESS(Status)) 
+	{
+		goto NcNormalizeNameComponentExCleanup;
+	}
+
+	Status = FltQueryDirectoryFile(Instance,
+		ParentFileObject,
+		ExpandComponentName,
+		ExpandComponentNameLength,
+		FileNamesInformation,
+		TRUE,
+		(PUNICODE_STRING)MungedComponent,
+		TRUE,
+		NULL);
+
+	if (!NT_SUCCESS(Status)) 
+	{
+		goto NcNormalizeNameComponentExCleanup;
+	}
+
+NcNormalizeNameComponentExCleanup:
+
+	if (ParentHandle != 0) 
+	{
+		FltClose(ParentHandle);
+	}
+
+	if (ParentFileObject != NULL) 
+	{
+		ObDereferenceObject(ParentFileObject);
+	}
+	return Status;
+}
+
+NTSTATUS
+NcGenerateFileName(
+_In_ PFLT_INSTANCE Instance,
+_In_ PFILE_OBJECT FileObject,
+_In_opt_ PFLT_CALLBACK_DATA Data,
+_In_ FLT_FILE_NAME_OPTIONS NameOptions,
+_Out_ PBOOLEAN CacheFileNameInformation,
+_Inout_ PFLT_NAME_CONTROL OutputNameControl
+)
+{
+	NTSTATUS	Status;
+	BOOLEAN		Opened = (BOOLEAN)(FileObject->FsContext != NULL);                                       // True if file object is opened.
+	BOOLEAN		ReturnShortName = (BOOLEAN)(FltGetFileNameFormat(NameOptions) == FLT_FILE_NAME_SHORT);   // True if the user is requesting short name
+	BOOLEAN		ReturnOpenedName = (BOOLEAN)(FltGetFileNameFormat(NameOptions) == FLT_FILE_NAME_OPENED); // True if user is requesting opened name.
+	BOOLEAN		ReturnNormalizedName = (BOOLEAN)(FltGetFileNameFormat(NameOptions) == FLT_FILE_NAME_NORMALIZED); // True if user is requesting normalized name.
+	BOOLEAN		IgnoreCase;
+
+	FLT_FILE_NAME_OPTIONS		NameQueryMethod = FltGetFileNameQueryMethod(NameOptions);
+	FLT_FILE_NAME_OPTIONS		NameFlags = FLT_VALID_FILE_NAME_FLAGS & NameOptions;
+	PFLT_FILE_NAME_INFORMATION	LowerNameInfo = NULL; // File name as reported by lower name provider. Will always be down real mapping.
+	PFLT_FILE_NAME_INFORMATION	ShortInfo = NULL;  // We will use ShortInfo to store the short name if needed.
+	UNICODE_STRING				MungedName = EMPTY_UNICODE_STRING;
+	PUNICODE_STRING				Name = NULL; // Pointer to the name we are going to use.
+
+	PAGED_CODE();
+
+	FLT_ASSERT(IoGetTopLevelIrp() == NULL);
+	
+
+	if (!ReturnShortName &&
+		!ReturnOpenedName &&
+		!ReturnNormalizedName) 
+	{
+		Status = STATUS_NOT_SUPPORTED;
+		goto NcGenerateFileNameCleanup;
+	}
+
+	ClearFlag(NameFlags, FLT_FILE_NAME_REQUEST_FROM_CURRENT_PROVIDER);
+
+	Status = NcGetFileNameInformation(Data,
+		FileObject,
+		Instance,
+		(ReturnNormalizedName ? FLT_FILE_NAME_NORMALIZED
+		: FLT_FILE_NAME_OPENED) |
+		NameQueryMethod |
+		NameFlags,
+		&LowerNameInfo);
+
+	if (!NT_SUCCESS(Status)) 
+	{
+		goto NcGenerateFileNameCleanup;
+	}
+
+	Status = FltParseFileNameInformation(LowerNameInfo);
+
+	if (!NT_SUCCESS(Status)) 
+	{
+		goto NcGenerateFileNameCleanup;
+	}
+
+	if (!Opened) 
+	{
+
+		SetFlag(NameFlags, FLT_FILE_NAME_DO_NOT_CACHE);
+
+		if (Data) 
+		{
+			FLT_ASSERT(Data->Iopb->MajorFunction == IRP_MJ_CREATE || Data->Iopb->MajorFunction == IRP_MJ_NETWORK_QUERY_OPEN);
+			IgnoreCase = !BooleanFlagOn(Data->Iopb->OperationFlags, SL_CASE_SENSITIVE);
+
+		}
+		else 
+		{
+			Status = STATUS_INVALID_PARAMETER;
+			goto NcGenerateFileNameCleanup;
+
+		}
+
+	}
+	else 
+	{
+		IgnoreCase = !BooleanFlagOn(FileObject->Flags, FO_OPENED_CASE_SENSITIVE);
+	}
+
+	if (ReturnOpenedName || ReturnNormalizedName) 
+	{
+		Name = &LowerNameInfo->Name;
+	}
+	else if (ReturnShortName) 
+	{
+			Status = NcGetFileNameInformation(Data,
+				FileObject,
+				Instance,
+				FLT_FILE_NAME_SHORT |
+				NameQueryMethod |
+				NameFlags,
+				&ShortInfo);
+
+			if (!NT_SUCCESS(Status)) 
+			{
+				goto NcGenerateFileNameCleanup;
+			}
+
+			Status = FltParseFileNameInformation(ShortInfo);
+
+			if (!NT_SUCCESS(Status)) 
+			{
+				goto NcGenerateFileNameCleanup;
+			}
+			Name = &ShortInfo->Name;
+		
+	}
+
+	FLT_ASSERT(Name != NULL);
+
+
+
+	Status = FltCheckAndGrowNameControl(OutputNameControl, Name->Length);
+
+	if (NT_SUCCESS(Status)) 
+	{
+		RtlCopyUnicodeString(&OutputNameControl->Name, Name);
+		*CacheFileNameInformation = TRUE;
+	}
+
+NcGenerateFileNameCleanup:
+
+	if (LowerNameInfo != NULL)
+	{
+		FltReleaseFileNameInformation(LowerNameInfo);
+	}
+
+	if (ShortInfo != NULL) 
+	{
+		FltReleaseFileNameInformation(ShortInfo);
+	}
+
+	if (MungedName.Buffer != NULL) 
+	{
+		ExFreePool(MungedName.Buffer);
+	}
+	return Status;
+}
+
+
+NTSTATUS
+NcGenerateFileNameCallback(
+_In_ PFLT_INSTANCE Instance,
+_In_ PFILE_OBJECT FileObject,
+_In_opt_ PFLT_CALLBACK_DATA Data,
+_In_ FLT_FILE_NAME_OPTIONS NameOptions,
+_Out_ PBOOLEAN CacheFileNameInformation,
+_Inout_ PFLT_NAME_CONTROL OutputNameControl
+)
+{
+
+	PAGED_CODE();
+
+	return NcGenerateFileName(Instance,
+		FileObject,
+		Data,
+		NameOptions,
+		CacheFileNameInformation,
+		OutputNameControl);
+}
+
+
+NTSTATUS
+NcNormalizeNameComponentCallback(
+_In_     PFLT_INSTANCE            Instance,
+_In_     PCUNICODE_STRING         ParentDirectory,
+_In_     USHORT                   DeviceNameLength,
+_In_     PCUNICODE_STRING         Component,
+_Out_writes_bytes_(ExpandComponentNameLength) PFILE_NAMES_INFORMATION ExpandComponentName,
+_In_     ULONG                    ExpandComponentNameLength,
+_In_     FLT_NORMALIZE_NAME_FLAGS Flags,
+_Inout_ PVOID           *NormalizationContext
+)
+{
+
+	PAGED_CODE();
+
+	return NcNormalizeNameComponentEx(Instance,
+		NULL,
+		ParentDirectory,
+		DeviceNameLength,
+		Component,
+		ExpandComponentName,
+		ExpandComponentNameLength,
+		Flags,
+		NormalizationContext);
+}
+
+
+
+
+CONST FLT_REGISTRATION g_FilterRegistration = 
+{
 	sizeof(FLT_REGISTRATION),			//  Size
 	FLT_REGISTRATION_VERSION,           //  Version
 	0,                                  //  Flags
@@ -70,9 +444,11 @@ CONST FLT_REGISTRATION g_FilterRegistration = {
 	NULL,								//  InstanceQueryTeardown
 	NULL,								//  InstanceTeardownStart
 	NULL,								//  InstanceTeardownComplete
-	NULL,                               //  GenerateFileName
-	NULL,                               //  GenerateDestinationFileName
-	NULL                                //  NormalizeNameComponent
+	NcGenerateFileNameCallback,         //  GenerateFileName
+	NcNormalizeNameComponentCallback,   //  GenerateDestinationFileName
+	NULL,                               //  NormalizeNameComponent
+	NULL,
+	NULL
 };
 
 
@@ -559,7 +935,7 @@ FLT_PREOP_CALLBACK_STATUS ProcessRename(PUNICODE_STRING pOrgNtName, PFLT_CALLBAC
 	pfn = (PFILE_RENAME_INFORMATION)(Data->Iopb->Parameters.SetFileInformation.InfoBuffer);
 	if (pfn)
 	{
-		pRenameNode = MyAllocateMemory(PagedPool, sizeof(FILE_RENAME_NODE));
+		pRenameNode = MyAllocateMemory(NonPagedPool, sizeof(FILE_RENAME_NODE));
 		if (pRenameNode)
 		{
 			usDosPath.Buffer = &pfn->FileName[4];
@@ -653,18 +1029,18 @@ FLT_PREOP_CALLBACK_STATUS SbPreSetinfoCallback( PFLT_CALLBACK_DATA Data, PCFLT_R
 	status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &pNameInfo);
 	if (!NT_SUCCESS(status))
 	{
-	goto clean_ret;
+		goto clean_ret;
 	}
 
 	status = FltParseFileNameInformation(pNameInfo);
 	if (!NT_SUCCESS(status))
 	{
-	goto clean_ret;
+		goto clean_ret;
 	}
 
 	if (pNameInfo->Name.Length <= 48)
 	{
-	goto clean_ret;
+		goto clean_ret;
 	}
 
 	if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass == FileDispositionInformation &&

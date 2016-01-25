@@ -1634,7 +1634,7 @@ SbConvertToSbName(
 IN PUNICODE_STRING			pSandboxPath,
 IN PUNICODE_STRING			pSrcName,
 OUT PUNICODE_STRING			pDstName,
-IN WCHAR*			pVolName
+IN WCHAR*					pVolName
 )
 {
 	NTSTATUS		ntStatus = STATUS_UNSUCCESSFUL;

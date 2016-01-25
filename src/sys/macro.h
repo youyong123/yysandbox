@@ -11,6 +11,8 @@
 #define		STATUS_SB_DIR_CREATED			0xe0000005
 #define		MAX_VOLUME_CHARS				26	
 
+#define EMPTY_UNICODE_STRING {0, 0, NULL}
+
 #define MyNew(_type, _count) \
 (_type*)ExAllocatePoolWithTag(NonPagedPool, sizeof(_type) * (_count), 'FCLM')
 
