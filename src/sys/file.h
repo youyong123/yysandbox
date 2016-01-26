@@ -9,11 +9,8 @@ NTSTATUS					SbInitMinifilter(PDRIVER_OBJECT pDriverObj);
 void						SbUninitMinifilter();
 NTSTATUS					SbSetSandBoxPath(PVOID buf,ULONG len);
 
-void UninitMailPost(void);
-NTSTATUS InitMailPost();
-
 NTSTATUS
-NcNormalizeNameComponentCallback(
+SbNormalizeNameComponentCallback(
 _In_     PFLT_INSTANCE            Instance,
 _In_     PCUNICODE_STRING         ParentDirectory,
 _In_     USHORT                   DeviceNameLength,
@@ -25,7 +22,7 @@ _Inout_ PVOID           *NormalizationContext
 );
 
 NTSTATUS
-NcGenerateFileNameCallback(
+SbGenerateFileNameCallback(
 _In_ PFLT_INSTANCE Instance,
 _In_ PFILE_OBJECT FileObject,
 _In_opt_ PFLT_CALLBACK_DATA Data,
@@ -34,6 +31,28 @@ _Out_ PBOOLEAN CacheFileNameInformation,
 _Inout_ PFLT_NAME_CONTROL OutputNameControl
 );
 
+NTSTATUS
+SbNormalizeNameComponentEx(
+_In_     PFLT_INSTANCE            Instance,
+_In_opt_ PFILE_OBJECT             FileObject,
+_In_     PCUNICODE_STRING         ParentDirectory,
+_In_     USHORT                   DeviceNameLength,
+_In_     PCUNICODE_STRING         Component,
+_Out_writes_bytes_(ExpandComponentNameLength) PFILE_NAMES_INFORMATION ExpandComponentName,
+_In_     ULONG                    ExpandComponentNameLength,
+_In_     FLT_NORMALIZE_NAME_FLAGS Flags,
+_Inout_ PVOID           *NormalizationContext
+);
+
+NTSTATUS
+SbGenerateFileName(
+_In_ PFLT_INSTANCE Instance,
+_In_ PFILE_OBJECT FileObject,
+_In_opt_ PFLT_CALLBACK_DATA Data,
+_In_ FLT_FILE_NAME_OPTIONS NameOptions,
+_Out_ PBOOLEAN CacheFileNameInformation,
+_Inout_ PFLT_NAME_CONTROL OutputNameControl
+);
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text(PAGE, SbPreCreateCallback)
@@ -43,5 +62,9 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 #pragma alloc_text(PAGE, SbInitMinifilter)
 #pragma alloc_text(PAGE, SbUninitMinifilter)
 #pragma alloc_text(PAGE, SbInstanceSetup)
+#pragma alloc_text(PAGE, SbNormalizeNameComponentEx)
+#pragma alloc_text(PAGE, SbGenerateFileName)
 #pragma alloc_text(PAGE, SbSetSandBoxPath)
+#pragma alloc_text(PAGE, SbNormalizeNameComponentCallback)
+#pragma alloc_text(PAGE, SbGenerateFileNameCallback)
 #endif

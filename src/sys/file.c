@@ -70,8 +70,8 @@ CONST FLT_REGISTRATION g_FilterRegistration =
 	NULL,								//  InstanceQueryTeardown
 	NULL,								//  InstanceTeardownStart
 	NULL,								//  InstanceTeardownComplete
-	NcGenerateFileNameCallback,         //  GenerateFileName
-	NcNormalizeNameComponentCallback,   //  GenerateDestinationFileName
+	SbGenerateFileNameCallback,         //  GenerateFileName
+	SbNormalizeNameComponentCallback,   //  GenerateDestinationFileName
 	NULL,                               //  NormalizeNameComponent
 	NULL,
 	NULL
@@ -80,7 +80,7 @@ CONST FLT_REGISTRATION g_FilterRegistration =
 
 
 NTSTATUS
-NcNormalizeNameComponentEx(
+SbNormalizeNameComponentEx(
 _In_     PFLT_INSTANCE            Instance,
 _In_opt_ PFILE_OBJECT             FileObject,
 _In_     PCUNICODE_STRING         ParentDirectory,
@@ -141,7 +141,7 @@ _Inout_ PVOID           *NormalizationContext
 
 	if (!NT_SUCCESS(Status)) 
 	{
-		goto NcNormalizeNameComponentExCleanup;
+		goto SbNormalizeNameComponentExCleanup;
 	}
 
 	Status = FltQueryDirectoryFile(Instance,
@@ -156,10 +156,10 @@ _Inout_ PVOID           *NormalizationContext
 
 	if (!NT_SUCCESS(Status)) 
 	{
-		goto NcNormalizeNameComponentExCleanup;
+		goto SbNormalizeNameComponentExCleanup;
 	}
 
-NcNormalizeNameComponentExCleanup:
+SbNormalizeNameComponentExCleanup:
 
 	if (ParentHandle != 0) 
 	{
@@ -174,7 +174,7 @@ NcNormalizeNameComponentExCleanup:
 }
 
 NTSTATUS
-NcGenerateFileName(
+SbGenerateFileName(
 _In_ PFLT_INSTANCE Instance,
 _In_ PFILE_OBJECT FileObject,
 _In_opt_ PFLT_CALLBACK_DATA Data,
@@ -206,7 +206,7 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 		!ReturnNormalizedName) 
 	{
 		Status = STATUS_NOT_SUPPORTED;
-		goto NcGenerateFileNameCleanup;
+		goto SbGenerateFileNameCleanup;
 	}
 
 	ClearFlag(NameFlags, FLT_FILE_NAME_REQUEST_FROM_CURRENT_PROVIDER);
@@ -222,14 +222,14 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 
 	if (!NT_SUCCESS(Status)) 
 	{
-		goto NcGenerateFileNameCleanup;
+		goto SbGenerateFileNameCleanup;
 	}
 
 	Status = FltParseFileNameInformation(LowerNameInfo);
 
 	if (!NT_SUCCESS(Status)) 
 	{
-		goto NcGenerateFileNameCleanup;
+		goto SbGenerateFileNameCleanup;
 	}
 
 	if (!Opened) 
@@ -246,7 +246,7 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 		else 
 		{
 			Status = STATUS_INVALID_PARAMETER;
-			goto NcGenerateFileNameCleanup;
+			goto SbGenerateFileNameCleanup;
 
 		}
 
@@ -272,14 +272,14 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 
 			if (!NT_SUCCESS(Status)) 
 			{
-				goto NcGenerateFileNameCleanup;
+				goto SbGenerateFileNameCleanup;
 			}
 
 			Status = FltParseFileNameInformation(ShortInfo);
 
 			if (!NT_SUCCESS(Status)) 
 			{
-				goto NcGenerateFileNameCleanup;
+				goto SbGenerateFileNameCleanup;
 			}
 			Name = &ShortInfo->Name;
 		
@@ -295,7 +295,7 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 		*CacheFileNameInformation = TRUE;
 	}
 
-NcGenerateFileNameCleanup:
+SbGenerateFileNameCleanup:
 
 	if (LowerNameInfo != NULL)
 	{
@@ -311,7 +311,7 @@ NcGenerateFileNameCleanup:
 
 
 NTSTATUS
-NcGenerateFileNameCallback(
+SbGenerateFileNameCallback(
 _In_ PFLT_INSTANCE Instance,
 _In_ PFILE_OBJECT FileObject,
 _In_opt_ PFLT_CALLBACK_DATA Data,
@@ -323,7 +323,7 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 
 	PAGED_CODE();
 
-	return NcGenerateFileName(Instance,
+	return SbGenerateFileName(Instance,
 		FileObject,
 		Data,
 		NameOptions,
@@ -333,7 +333,7 @@ _Inout_ PFLT_NAME_CONTROL OutputNameControl
 
 
 NTSTATUS
-NcNormalizeNameComponentCallback(
+SbNormalizeNameComponentCallback(
 _In_     PFLT_INSTANCE            Instance,
 _In_     PCUNICODE_STRING         ParentDirectory,
 _In_     USHORT                   DeviceNameLength,
@@ -347,7 +347,7 @@ _Inout_ PVOID           *NormalizationContext
 
 	PAGED_CODE();
 
-	return NcNormalizeNameComponentEx(Instance,
+	return SbNormalizeNameComponentEx(Instance,
 		NULL,
 		ParentDirectory,
 		DeviceNameLength,
