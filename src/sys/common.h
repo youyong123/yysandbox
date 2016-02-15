@@ -1,6 +1,8 @@
 #ifndef _TL_COMMON_UTILS_H_
 #define _TL_COMMON_UTILS_H_
 
+#pragma warning( disable:4127 4305 4100 4201)
+
 VOID		SleepImp(__int64 ReqInterval);
 PWCHAR		GetProcNameByPid(IN  HANDLE   dwProcessId, PWCHAR pPath);
 NTSTATUS	AllocateUnicodeString(PUNICODE_STRING String);
