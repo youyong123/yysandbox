@@ -1002,7 +1002,7 @@ NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 	}
 
 	status = GetSysrootNtPath(&usSysrootNt);
-	if (NT_SUCCESS(status))
+	if (NT_SUCCESS(status) && usSysrootNt.Buffer)
 	{
 		g_SandBoxPath[22] = usSysrootNt.Buffer[22];
 		g_SandBoxVolume[22] = usSysrootNt.Buffer[22];
