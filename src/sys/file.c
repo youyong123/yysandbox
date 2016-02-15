@@ -653,7 +653,6 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 			{
 				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
 				{
-					
 					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 					if(NT_SUCCESS(status))
 					{
@@ -677,13 +676,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 							Data->IoStatus.Information = 0;
 							goto RepPreCreateCleanup;
 						}
-						status = SbCopyFile(g_FilterHandle,
-								pOutVolumeInstance,
-								NULL,
-								&nameInfo->Name,
-								g_SbVolInstance,
-								&usInnerPath,
-								bDir);
+						status = CopyFile(g_FilterHandle, &nameInfo->Name, pOutVolumeInstance, &usInnerPath, g_SbVolInstance);
 						if(!NT_SUCCESS(status))
 						{
 							Data->IoStatus.Status = status;

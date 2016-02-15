@@ -187,37 +187,6 @@ OUT	PBOOLEAN		bDirectory
 	return FALSE;
 }
 
-
-BOOLEAN  IsFileExist(PUNICODE_STRING pPath, OUT	PBOOLEAN bDirectory)
-{
-	BOOLEAN					bret = FALSE;
-	NTSTATUS				status = STATUS_SUCCESS;
-	OBJECT_ATTRIBUTES		attributes;
-	FILE_NETWORK_OPEN_INFORMATION  FileInformation;
-
-	PAGED_CODE();
-
-	InitializeObjectAttributes(&attributes, pPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
-
-	status = ZwQueryFullAttributesFile(&attributes, &FileInformation);
-	if (NT_SUCCESS(status))
-	{
-		if (bDirectory)
-		{
-			if (FileInformation.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-			{
-				*bDirectory = TRUE;
-			}
-		}
-		bret = TRUE;
-	}
-	if (status == STATUS_SHARING_VIOLATION)
-	{
-		bret = TRUE;
-	}
-	return bret;
-}
-
 BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG bufferLength)
 {
 	NTSTATUS status = STATUS_SUCCESS;
@@ -249,6 +218,36 @@ BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG b
 	return FALSE;
 }
 
+BOOLEAN  IsFileExist(PUNICODE_STRING pPath, OUT	PBOOLEAN bDirectory)
+{
+	BOOLEAN					bret = FALSE;
+	NTSTATUS				status = STATUS_SUCCESS;
+	OBJECT_ATTRIBUTES		attributes;
+	FILE_NETWORK_OPEN_INFORMATION  FileInformation;
+
+	PAGED_CODE();
+
+	InitializeObjectAttributes(&attributes, pPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+
+	status = ZwQueryFullAttributesFile(&attributes, &FileInformation);
+	if (NT_SUCCESS(status))
+	{
+		if (bDirectory)
+		{
+			if (FileInformation.FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				*bDirectory = TRUE;
+			}
+		}
+		bret = TRUE;
+	}
+	if (status == STATUS_SHARING_VIOLATION)
+	{
+		bret = TRUE;
+	}
+	return bret;
+}
+
 
 NTSTATUS
 FltQueryInformationFileSyncronous(
@@ -269,431 +268,22 @@ OUT PULONG LengthReturned OPTIONAL
 		);
 }
 
-
-NTSTATUS
-SbCopyFile(
-IN PFLT_FILTER	pFilter,
-IN PFLT_INSTANCE	pSrcInstance,
-IN PFILE_OBJECT		pSrcFileObj,
-IN PUNICODE_STRING	pSrcFileName,
-IN PFLT_INSTANCE	pDstInstance,
-IN PUNICODE_STRING	pDstFileName,
-IN BOOLEAN			bDirectory
-)
+NTSTATUS GetFileSize(IN PFLT_INSTANCE Instance, IN PFILE_OBJECT FileObject, OUT PLARGE_INTEGER pFileSize)
 {
-	NTSTATUS		ntStatus = STATUS_UNSUCCESSFUL;
-	PFILE_STREAM_INFORMATION	pStreamInfo = NULL;
-	ULONG			uStreamInfoSize = PAGE_SIZE;
-	PVOID			pStreamBuffer = NULL;
-	UNICODE_STRING	ustrSrcFileName = { 0, 0, 0 };
-	UNICODE_STRING	ustrDstFileName = { 0, 0, 0 };
-	UNICODE_STRING	ustrTmpName = { 0, 0, 0 };
-	HANDLE			hFile = NULL;
-	PFILE_OBJECT	pSrcFileObject = NULL;
-	static UNICODE_STRING	dataStreamName = UNICODE_STRING_CONST("::$DATA");
-	IO_STATUS_BLOCK					iosb = { 0 };
-	FILE_FS_ATTRIBUTE_INFORMATION*	fsAttribInfomation = NULL;
-	ULONG							length = sizeof(FILE_FS_ATTRIBUTE_INFORMATION) + 20;
+	FILE_NETWORK_OPEN_INFORMATION	FileInformation;
+	NTSTATUS						status = STATUS_SUCCESS;
+	ULONG							Length = 0;
 
-	__try
+	if (!Instance || !FileObject || !pFileSize)
 	{
-		if (pFilter == NULL || pSrcInstance == NULL ||
-			pSrcFileName == NULL || pDstInstance == NULL || pDstFileName == NULL)
-		{
-			ntStatus = STATUS_INVALID_PARAMETER;
-			__leave;
-		}
-
-		if (!pSrcFileObj && !pSrcFileName)
-		{
-			ntStatus = STATUS_INVALID_PARAMETER;
-			__leave;
-		}
-
-		if (!pSrcFileObj)
-		{
-			OBJECT_ATTRIBUTES	objAttrib;
-			IO_STATUS_BLOCK		ioStatus = { 0, 0 };
-
-			InitializeObjectAttributes(&objAttrib,
-				pSrcFileName,
-				OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-				NULL,
-				NULL);
-
-			ntStatus = FltCreateFile(pFilter,
-				pSrcInstance,
-				&hFile,
-				GENERIC_READ | SYNCHRONIZE,
-				&objAttrib,
-				&ioStatus,
-				0,
-				FILE_ATTRIBUTE_NORMAL,
-				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-				FILE_OPEN,
-				FILE_SYNCHRONOUS_IO_NONALERT,
-				NULL, 0, 0);
-			if (!NT_SUCCESS(ntStatus))
-				__leave;
-
-			ntStatus = ObReferenceObjectByHandle(hFile,
-				FILE_ANY_ACCESS,
-				NULL,
-				KernelMode,
-				&pSrcFileObject,
-				NULL);
-			if (!NT_SUCCESS(ntStatus))
-				__leave;
-
-		}
-		else
-		{
-			pSrcFileObject = pSrcFileObj;
-		}
-
-		do
-		{
-			pStreamBuffer = MyAllocateMemory(PagedPool, uStreamInfoSize);
-			if (pStreamBuffer == NULL)
-			{
-				ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-				__leave;
-			}
-
-			ntStatus = FltQueryInformationFileSyncronous(pSrcInstance,
-				pSrcFileObject,
-				pStreamBuffer,
-				uStreamInfoSize,
-				FileStreamInformation,
-				NULL);
-			if (NT_SUCCESS(ntStatus))
-				break;
-
-			uStreamInfoSize += PAGE_SIZE;
-			ExFreePool(pStreamBuffer);
-			pStreamBuffer = NULL;
-
-		} while (ntStatus == STATUS_BUFFER_OVERFLOW || ntStatus == STATUS_BUFFER_TOO_SMALL);
-
-		if (ntStatus == STATUS_INVALID_PARAMETER)
-		{
-			fsAttribInfomation = (FILE_FS_ATTRIBUTE_INFORMATION*)MyNew(BYTE, length);
-			if (!fsAttribInfomation)
-			{
-				ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-				__leave;
-			}
-
-			ntStatus = FltQueryVolumeInformation(pSrcInstance, &iosb, fsAttribInfomation,
-				length, FileFsAttributeInformation);
-			if (!NT_SUCCESS(ntStatus))
-				__leave;
-
-			if (0 != _wcsnicmp(L"NTFS",
-				fsAttribInfomation->FileSystemName,
-				fsAttribInfomation->FileSystemNameLength / sizeof(WCHAR))
-				)
-			{
-				ntStatus = SbDoCopyFile(pFilter,
-					pSrcFileObject,
-					pSrcInstance,
-					pSrcFileName,
-					pDstInstance,
-					pDstFileName,
-					bDirectory);
-
-				__leave;
-			}
-		}
-
-		if (!NT_SUCCESS(ntStatus))
-			__leave;
-
-		pStreamInfo = (PFILE_STREAM_INFORMATION)pStreamBuffer;
-		while (TRUE)
-		{
-			ustrTmpName.MaximumLength = ustrTmpName.Length = (USHORT)pStreamInfo->StreamNameLength;
-			ustrTmpName.Buffer = pStreamInfo->StreamName;
-			if (RtlEqualUnicodeString(&ustrTmpName, &dataStreamName, TRUE))
-			{
-				ntStatus = SbDoCopyFile(pFilter,
-					pSrcFileObject,
-					pSrcInstance,
-					pSrcFileName,
-					pDstInstance,
-					pDstFileName,
-					bDirectory);
-
-				if (!NT_SUCCESS(ntStatus) && STATUS_SB_DIR_CREATED != ntStatus)
-					break;
-
-				if (pStreamInfo->NextEntryOffset == 0)
-					break;
-
-				pStreamInfo = (PFILE_STREAM_INFORMATION)((ULONG_PTR)pStreamInfo + pStreamInfo->NextEntryOffset);
-				continue;
-			}
-
-			ustrSrcFileName.MaximumLength = ustrSrcFileName.Length = pSrcFileName->Length + (USHORT)pStreamInfo->StreamNameLength;
-			ustrSrcFileName.Buffer = MyAllocateMemory(PagedPool, ustrSrcFileName.Length);
-
-			ustrDstFileName.MaximumLength = ustrDstFileName.Length = pDstFileName->Length + (USHORT)pStreamInfo->StreamNameLength;
-			ustrDstFileName.Buffer = MyAllocateMemory(PagedPool, ustrDstFileName.Length);
-			if (ustrSrcFileName.Buffer == NULL || ustrDstFileName.Buffer == NULL)
-			{
-				if (ustrSrcFileName.Buffer != NULL)
-				{
-					ExFreePool(ustrSrcFileName.Buffer);
-					ustrSrcFileName.Buffer = NULL;
-				}
-				if (ustrDstFileName.Buffer != NULL)
-				{
-					ExFreePool(ustrDstFileName.Buffer);
-					ustrDstFileName.Buffer = NULL;
-				}
-
-				ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-				__leave;
-			}
-
-			RtlCopyMemory(ustrSrcFileName.Buffer, pSrcFileName->Buffer, pSrcFileName->Length);
-			RtlCopyMemory(ustrSrcFileName.Buffer + pSrcFileName->Length / sizeof(WCHAR),
-				pStreamInfo->StreamName,
-				pStreamInfo->StreamNameLength);
-
-			RtlCopyMemory(ustrDstFileName.Buffer, pDstFileName->Buffer, pDstFileName->Length);
-			RtlCopyMemory(ustrDstFileName.Buffer + pDstFileName->Length / sizeof(WCHAR),
-				pStreamInfo->StreamName,
-				pStreamInfo->StreamNameLength);
-
-			ntStatus = SbDoCopyFile(pFilter,
-				pSrcFileObject,
-				pSrcInstance,
-				&ustrSrcFileName,
-				pDstInstance,
-				&ustrDstFileName,
-				bDirectory);
-
-			ExFreePool(ustrSrcFileName.Buffer);
-			ustrSrcFileName.Buffer = NULL;
-
-			ExFreePool(ustrDstFileName.Buffer);
-			ustrDstFileName.Buffer = NULL;
-
-
-			if (!NT_SUCCESS(ntStatus) && ntStatus != STATUS_SB_DIR_CREATED)
-				break;
-
-
-			if (pStreamInfo->NextEntryOffset == 0)
-				break;
-
-			pStreamInfo = (PFILE_STREAM_INFORMATION)((ULONG_PTR)pStreamInfo + pStreamInfo->NextEntryOffset);
-		}
+		return STATUS_INVALID_PARAMETER;
 	}
-	__except (EXCEPTION_EXECUTE_HANDLER)
+	status = FltQueryInformationFile(Instance, FileObject,&FileInformation,sizeof(FILE_NETWORK_OPEN_INFORMATION),FileNetworkOpenInformation,&Length);
+	if (NT_SUCCESS(status))
 	{
-
+		*pFileSize = FileInformation.EndOfFile;
 	}
-
-	MyDelete(fsAttribInfomation);
-
-	if (!pSrcFileObj && pSrcFileObject)
-		ObDereferenceObject(pSrcFileObject);
-
-	if (hFile)
-		FltClose(hFile);
-
-	if (pStreamBuffer)
-	{
-		ExFreePool(pStreamBuffer);
-		pStreamBuffer = NULL;
-	}
-	return ntStatus;
-}
-
-NTSTATUS
-SbDoCopyFile(
-IN PFLT_FILTER	pFilter,
-IN PFILE_OBJECT	pSrcObject,
-IN PFLT_INSTANCE	pSrcInstance,
-IN PUNICODE_STRING	pSrcFileName,
-IN PFLT_INSTANCE	pDstInstance,
-IN PUNICODE_STRING	pDstFileName,
-IN BOOLEAN 			bDirectory
-)
-{
-	NTSTATUS		ntStatus = STATUS_SUCCESS;
-	OBJECT_ATTRIBUTES	objSrcAttrib;
-	OBJECT_ATTRIBUTES	objDstAttrib;
-	HANDLE			hSrcFile = NULL;
-	HANDLE			hDstFile = NULL;
-	PFILE_OBJECT	pSrcFileObject = NULL;
-	PFILE_OBJECT	pDstFileObject = NULL;
-	IO_STATUS_BLOCK	ioStatus;
-	LARGE_INTEGER	liOffset;
-	ULONG			uReadSize;
-	ULONG			uWriteSize;
-	PVOID			pBuffer = NULL;
-	ULONG 			CreateOptions = FILE_SYNCHRONOUS_IO_NONALERT;
-
-	__try
-	{
-		if (pFilter == NULL ||
-			pSrcInstance == NULL ||
-			pSrcFileName == NULL ||
-			pDstInstance == NULL ||
-			pDstFileName == NULL)
-		{
-			ntStatus = STATUS_INVALID_PARAMETER;
-			__leave;
-		}
-
-		if (bDirectory)
-			CreateOptions |= FILE_DIRECTORY_FILE;
-
-
-		if (!bDirectory)
-		{
-			if (!pSrcObject)
-			{
-				InitializeObjectAttributes(&objSrcAttrib,
-					pSrcFileName,
-					OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-					NULL,
-					NULL);
-
-				ntStatus = FltCreateFile(pFilter,
-					pSrcInstance,
-					&hSrcFile,
-					FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-					&objSrcAttrib,
-					&ioStatus,
-					0,
-					FILE_ATTRIBUTE_NORMAL,
-					FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-					FILE_OPEN,
-					CreateOptions,
-					NULL, 0, 0);
-				if (!NT_SUCCESS(ntStatus))
-					__leave;
-
-				ntStatus = ObReferenceObjectByHandle(hSrcFile,
-					FILE_ANY_ACCESS,
-					NULL,
-					KernelMode,
-					&pSrcFileObject,
-					NULL);
-				if (!NT_SUCCESS(ntStatus))
-					__leave;
-			}
-			else
-				pSrcFileObject = pSrcObject;
-		}
-
-		InitializeObjectAttributes(&objDstAttrib,
-			pDstFileName,
-			OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-			NULL,
-			NULL);
-
-		ntStatus = FltCreateFile(pFilter,
-			pDstInstance,
-			&hDstFile,
-			GENERIC_WRITE | SYNCHRONIZE,
-			&objDstAttrib,
-			&ioStatus,
-			0,
-			FILE_ATTRIBUTE_NORMAL,
-			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-			FILE_CREATE,
-			CreateOptions,
-			NULL, 0, 0);
-		if (!NT_SUCCESS(ntStatus))
-			__leave;
-
-		ntStatus = ObReferenceObjectByHandle(hDstFile,
-			FILE_ANY_ACCESS,
-			NULL,
-			KernelMode,
-			&pDstFileObject,
-			NULL);
-
-		if (!NT_SUCCESS(ntStatus))
-			__leave;
-
-		if (bDirectory)
-		{
-			ntStatus = STATUS_SB_DIR_CREATED;
-			__leave;
-		}
-
-		pBuffer = MyAllocateMemory(PagedPool, PAGE_SIZE);
-		if (pBuffer == NULL)
-		{
-			ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-			__leave;
-		}
-
-		liOffset.QuadPart = pSrcFileObject->CurrentByteOffset.QuadPart;
-
-		while (NT_SUCCESS(ntStatus))
-		{
-			uReadSize = 0;	uWriteSize = 0;
-
-			ntStatus = FltReadFile(pSrcInstance,
-				pSrcFileObject,
-				0,
-				PAGE_SIZE,
-				pBuffer,
-				FLTFL_IO_OPERATION_NON_CACHED | FLTFL_IO_OPERATION_DO_NOT_UPDATE_BYTE_OFFSET,
-				&uReadSize,
-				NULL,
-				NULL);
-			if ((!NT_SUCCESS(ntStatus)) || (uReadSize == 0))
-				break;
-
-			pSrcFileObject->CurrentByteOffset.QuadPart += uReadSize;
-
-			ntStatus = FltWriteFile(pDstInstance,
-				pDstFileObject,
-				0,
-				uReadSize,
-				pBuffer,
-				0,
-				&uWriteSize,
-				NULL,
-				NULL);
-			if (!NT_SUCCESS(ntStatus))
-				break;
-
-			if (uReadSize < PAGE_SIZE)
-				break;
-		}
-
-		pSrcFileObject->CurrentByteOffset.QuadPart = liOffset.QuadPart;
-		if (ntStatus == STATUS_END_OF_FILE)
-		{
-			ntStatus = STATUS_SUCCESS;
-		}
-	}
-	__except (EXCEPTION_EXECUTE_HANDLER)
-	{
-	}
-
-	if (pBuffer != NULL)
-		ExFreePool(pBuffer);
-
-	if (pDstFileObject != NULL)
-		ObDereferenceObject(pDstFileObject);
-	if (hDstFile != NULL)
-		FltClose(hDstFile);
-	if (pSrcFileObject != NULL && !pSrcObject)
-		ObDereferenceObject(pSrcFileObject);
-	if (hSrcFile != NULL)
-		FltClose(hSrcFile);
-
-	return ntStatus;
+	return status;
 }
 
 PFLT_INSTANCE  SbGetVolumeInstance(IN PFLT_FILTER pFilter, IN PUNICODE_STRING pVolumeName)
@@ -951,75 +541,6 @@ ULONGLONG APHashA(PCHAR wstr)
 		}
 	}
 	return hash;
-}
-
-BOOLEAN GetHostFromPost(const char* http_block, ULONG	http_len, char* pOutBuf, ULONG OutBufLen, BOOLEAN* pbMail, BOOLEAN* pbSpecial)
-{
-	ULONG	i = 0;
-	ULONG	len = 0;
-	ULONG	j = 0;
-	BOOLEAN bFoundHost = FALSE;
-
-	if (!http_block || !http_len || !pOutBuf || !OutBufLen)
-	{
-		return	FALSE;
-	}
-
-	len = http_len - 6;
-
-	for (; http_block[i] && i < len; i++)
-	{
-		if (http_block[i] != '\n')
-		{
-			continue;
-		}
-		if (http_block[i + 1] == '\r' && http_block[i + 2] == '\n')
-		{
-			break;
-		}
-		if (_strnicmp(&http_block[i + 1], "Host:", strlen("Host:")) == 0)
-		{
-			bFoundHost = TRUE;
-			break;
-		}
-	}
-	if (bFoundHost)
-	{
-		i += 6;
-		for (; http_block[i] && http_block[i] != '\r' && http_block[i] != '\n' && j < OutBufLen; i++)
-		{
-			if (http_block[i] != ' ')
-			{
-				pOutBuf[j] = http_block[i];
-				j++;
-			}
-		}
-		pOutBuf[j] = '\0';
-		if (pbMail && pbSpecial)
-		{
-			if (strstr(pOutBuf, "mail"))
-			{
-				*pbMail = TRUE;
-				if (strstr(pOutBuf, "189") || strstr(pOutBuf, "21cn"))
-				{
-					*pbSpecial = TRUE;
-				}
-				else
-				{
-					*pbSpecial = FALSE;
-				}
-			}
-			else
-			{
-				*pbMail = FALSE;
-			}
-		}
-		return TRUE;
-	}
-	else
-	{
-		return FALSE;
-	}
 }
 
 WCHAR  my_towupper(WCHAR wch)
@@ -1603,7 +1124,7 @@ WCHAR* ReplaceString(WCHAR* pString, WCHAR* pOldString, WCHAR* pNewString,BOOLEA
 	{
 		return NULL;
 	}
-	NewLength = (wcslen(pString) - wcslen(pOldString) + wcslen(pNewString) + 1)*sizeof(WCHAR);
+	NewLength = (ULONG)(wcslen(pString) - wcslen(pOldString) + wcslen(pNewString) + 1)*sizeof(WCHAR);
 	pReplaced = (WCHAR*)ExAllocatePoolWithTag(PagedPool, NewLength, 'str');
 	if (!pReplaced)
 	{
@@ -1703,7 +1224,7 @@ NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIf
 	{
 		return STATUS_INVALID_PARAMETER;
 	}
-	fbiLen = sizeof(FILE_RENAME_INFORMATION) + sizeof(WCHAR)*wcslen(szNewFileName);
+	fbiLen = (ULONG)sizeof(FILE_RENAME_INFORMATION) + (ULONG)(sizeof(WCHAR)*wcslen(szNewFileName));
 	pFbi = MyAllocateMemory(PagedPool, fbiLen);
 	if (!pFbi)
 	{
@@ -1730,7 +1251,7 @@ NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIf
 	pFbi->ReplaceIfExists = ReplaceIfExists;
 	pFbi->RootDirectory = RootDirectory;
 	StringCchCopyW(pFbi->FileName, wcslen(szNewFileName)+sizeof(WCHAR), szNewFileName);
-	pFbi->FileNameLength = sizeof(WCHAR)*wcslen(szNewFileName);
+	pFbi->FileNameLength = (ULONG)(sizeof(WCHAR)*wcslen(szNewFileName));
 	ntStatus = ZwSetInformationFile(hfile,&iostatus,pFbi,fbiLen,FileRenameInformation);
 	ExFreePool(pFbi);
 	ZwClose(hfile);
@@ -1914,4 +1435,156 @@ IN PUNICODE_STRING	pSandboxPath
 		}
 	}
 	return STATUS_SUCCESS;
+}
+
+
+NTSTATUS CopyFile(PFLT_FILTER Filter,IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2)
+{
+	NTSTATUS			status;
+	OBJECT_ATTRIBUTES	file2OA;
+	OBJECT_ATTRIBUTES	file1OA;
+	HANDLE				hFile1 = NULL;
+	HANDLE				hFile2 = NULL;
+	IO_STATUS_BLOCK		ioSB;
+	PFILE_OBJECT		pFileObject1 = NULL;
+	PFILE_OBJECT		pFileObject2 = NULL;
+
+	if (!Filter || !pusFileName1 || !pusFileName2 || !pInstance1 || !pInstance2)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	InitializeObjectAttributes(
+		&file1OA,
+		pusFileName1,
+		OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+		NULL,
+		NULL
+		);
+	InitializeObjectAttributes(
+		&file2OA,
+		pusFileName2,
+		OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+		NULL,
+		NULL
+		);
+
+	status = FltCreateFile(
+		Filter,
+		pInstance1,
+		&hFile1,
+		SYNCHRONIZE | FILE_READ_DATA,
+		&file1OA,
+		&ioSB,
+		NULL,
+		FILE_ATTRIBUTE_NORMAL,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		FILE_OPEN,
+		FILE_SYNCHRONOUS_IO_NONALERT,
+		NULL,
+		0,
+		0
+		);
+	if (NT_SUCCESS(status))
+	{
+		status = ObReferenceObjectByHandle(
+			hFile1,
+			0,
+			*IoFileObjectType,
+			KernelMode,
+			(PVOID *)&pFileObject1,
+			NULL
+			);
+		if (NT_SUCCESS(status))
+		{
+			status = FltCreateFile(
+				Filter,
+				pInstance2,
+				&hFile2,
+				SYNCHRONIZE | DELETE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES,
+				&file2OA,
+				&ioSB,
+				NULL,
+				FILE_ATTRIBUTE_NORMAL,
+				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				FILE_SUPERSEDE,
+				FILE_SYNCHRONOUS_IO_NONALERT,
+				NULL,
+				0,
+				0
+				);
+			if (NT_SUCCESS(status))
+			{
+				status = ObReferenceObjectByHandle(
+					hFile2,
+					0,
+					*IoFileObjectType,
+					KernelMode,
+					(PVOID *)&pFileObject2,
+					NULL
+					);
+				if (NT_SUCCESS(status))
+				{
+					LARGE_INTEGER FileSize;
+					FileSize.QuadPart = 0; 
+
+					status = GetFileSize(pInstance1, pFileObject1, &FileSize);
+					if (NT_SUCCESS(status) && FileSize.QuadPart)
+					{
+						ULONG BufSize = 64 * 1024;
+						PVOID Buf = ExAllocatePoolWithTag(PagedPool, BufSize, 'fie');
+						if (!Buf)
+						{
+							status = STATUS_INSUFFICIENT_RESOURCES;
+						}
+						else
+						{
+							ULONG cbRead = 0;
+							do
+							{
+								cbRead = 0;
+								status = FltReadFile(
+									pInstance1,
+									pFileObject1,
+									NULL,
+									BufSize,
+									Buf,
+									0,
+									&cbRead,
+									NULL,
+									NULL
+									);
+
+								if (NT_SUCCESS(status) && 0 != cbRead)
+								{
+									ULONG cbWritten = 0;
+									status = FltWriteFile(
+										pInstance2,
+										pFileObject2,
+										NULL,
+										cbRead,
+										Buf,
+										0,
+										&cbWritten,
+										NULL,
+										NULL
+										);
+								}
+							} while (NT_SUCCESS(status) && BufSize == cbRead);
+
+							ExFreePool(Buf);
+						}
+					}
+					ObDereferenceObject(pFileObject2);
+				}
+
+				FltClose(hFile2);
+			}
+
+			ObDereferenceObject(pFileObject1);
+		}
+
+		FltClose(hFile1);
+	}
+	return status;
 }

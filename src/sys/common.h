@@ -28,27 +28,6 @@ IN FILE_INFORMATION_CLASS FileInformationClass,
 OUT PULONG LengthReturned OPTIONAL
 );
 
-NTSTATUS
-SbDoCopyFile(
-IN PFLT_FILTER	pFilter,
-IN PFILE_OBJECT	pSrcObject,
-IN PFLT_INSTANCE	pSrcInstance,
-IN PUNICODE_STRING	pSrcFileName,
-IN PFLT_INSTANCE	pDstInstance,
-IN PUNICODE_STRING	pDstFileName,
-IN BOOLEAN 			bDirectory
-);
-
-NTSTATUS
-SbCopyFile(
-IN PFLT_FILTER	pFilter,
-IN PFLT_INSTANCE	pSrcInstance,
-IN PFILE_OBJECT		pSrcFileObj,
-IN PUNICODE_STRING	pSrcFileName,
-IN PFLT_INSTANCE	pDstInstance,
-IN PUNICODE_STRING	pDstFileName,
-IN BOOLEAN			bDirectory
-);
 
 PFLT_INSTANCE
 SbGetVolumeInstance(
@@ -159,5 +138,7 @@ IN PFLT_INSTANCE	pSbInstance,
 IN PUNICODE_STRING	pOutPath,
 IN PUNICODE_STRING	pSandboxPath
 );
+
+NTSTATUS CopyFile(PFLT_FILTER Filter, IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2);
 
 #endif 
