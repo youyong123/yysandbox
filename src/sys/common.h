@@ -101,6 +101,10 @@ IN WCHAR*			pVolName
 BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG bufferLength);
 NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIfExists, HANDLE RootDirectory);
 
+NTSTATUS FltDeleteDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName);
+
+NTSTATUS FltCreateDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName);
+
 NTSTATUS
 NcCreateFileHelper(
 _In_ PFLT_FILTER Filter,
@@ -138,6 +142,7 @@ IN PFLT_INSTANCE	pSbInstance,
 IN PUNICODE_STRING	pOutPath,
 IN PUNICODE_STRING	pSandboxPath
 );
+NTSTATUS DeleteFile(PFLT_FILTER	pFilter, PFLT_INSTANCE pInstance, IN PUNICODE_STRING pusFileName);
 
 NTSTATUS CopyFile(PFLT_FILTER Filter, IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2);
 

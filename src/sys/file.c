@@ -9,7 +9,7 @@
 #include "PRODUCER_COMSUMER_MACRO.h"
 
 static PFLT_FILTER			g_FilterHandle = NULL;
-static WCHAR				g_SandBoxPath[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1\\SandBox\\";
+static WCHAR				g_SandBoxPath[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1\\SBox\\";
 static WCHAR				g_SandBoxVolume[LONG_NAME_LEN] = L"\\Device\\HarddiskVolume1";
 PFLT_INSTANCE				g_SbVolInstance = NULL;
 
@@ -35,12 +35,12 @@ CONST FLT_OPERATION_REGISTRATION g_Callbacks[] =
 	{ IRP_MJ_CREATE,
 	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO ,
 	(PFLT_PRE_OPERATION_CALLBACK)SbPreCreateCallback,
-	NULL},
+	SbPostCreateCallback },
 
 	{ IRP_MJ_SET_INFORMATION,
 	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
 	(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
-	NULL},
+	SbPostSetinfoCallback },
 
 	{ IRP_MJ_OPERATION_END }
 };
@@ -76,7 +76,6 @@ CONST FLT_REGISTRATION g_FilterRegistration =
 	NULL,
 	NULL
 };
-
 
 
 NTSTATUS
@@ -532,6 +531,79 @@ BOOLEAN ShouldSandBox(HANDLE pid)
 	return b;
 }
 
+
+FLT_POSTOP_CALLBACK_STATUS
+SbPostCreateCallback(
+__inout PFLT_CALLBACK_DATA Data,
+__in PCFLT_RELATED_OBJECTS FltObjects,
+__in_opt PVOID CompletionContext,
+__in FLT_POST_OPERATION_FLAGS Flags
+)
+{
+	NTSTATUS					status = STATUS_SUCCESS;
+	FLT_POSTOP_CALLBACK_STATUS	returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
+	PFLT_FILE_NAME_INFORMATION	pNameInfo = NULL;
+	BOOLEAN 					IsDirectory = FALSE;
+	UNICODE_STRING				usSandBoxPath = { 0, 0, NULL };
+
+	UNREFERENCED_PARAMETER(CompletionContext);
+	UNREFERENCED_PARAMETER(Flags);
+
+	if (ShouldSkipPost(Data, FltObjects))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	if (FlagOn(FltObjects->FileObject->Flags, FO_HANDLE_CREATED))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	status = FltIsDirectory(FltObjects->FileObject, FltObjects->Instance, &IsDirectory);
+	if (IsDirectory)
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	if (!ShouldSandBox(PsGetCurrentProcessId()))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	
+	status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &pNameInfo);
+	if (!NT_SUCCESS(status))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	status = FltParseFileNameInformation(pNameInfo);
+	if (!NT_SUCCESS(status))
+	{
+		returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
+		goto clean_ret;
+	}
+	if (pNameInfo->Name.Length <= 48)//wcslen(L"\\Device\\HarddiskVolume0\\")*sizeof(WCAHR)
+	{
+		returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
+		goto clean_ret;
+	}
+	if (FILE_CREATED == Data->IoStatus.Information || FILE_OVERWRITTEN == Data->IoStatus.Information)
+	{
+		RtlInitUnicodeString(&usSandBoxPath, g_SandBoxPath);
+		if (RtlPrefixUnicodeString(&usSandBoxPath, &pNameInfo->Name, TRUE))
+		{
+			FltDeleteDelFlagExist(g_FilterHandle, g_SbVolInstance, &pNameInfo->Name);
+		}
+	}
+
+clean_ret:
+	if (pNameInfo)
+	{
+		FltReleaseFileNameInformation(pNameInfo);
+		pNameInfo = NULL;
+	}
+	return returnStatus;
+}
+
 FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_RELATED_OBJECTS FltObjects, PVOID *CompletionContext)
 {
 	PFLT_FILE_NAME_INFORMATION	nameInfo = NULL;
@@ -569,6 +641,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
+	callbackStatus = FLT_PREOP_SUCCESS_WITH_CALLBACK;
 	StringCchCopyW(DriverLetter, DRIVER_LETTER_LEN, pInstCtx->DriveLetter);
 	FltReleaseContext(pInstCtx);
 	RtlInitUnicodeString(&usSandBoxPath, g_SandBoxPath);
@@ -627,27 +700,18 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 		{
 			if (FltIsDelFlagExist(g_FilterHandle,g_SbVolInstance,&usInnerPath))
 			{
-				if (bCreateFile)
+				DeleteFile(g_FilterHandle, g_SbVolInstance, &usInnerPath);
+				status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
+				if(NT_SUCCESS(status))
 				{
-					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
-					if(NT_SUCCESS(status))
-					{
-						status = STATUS_SB_TRY_REPARSE;
-					}
-					else
-					{
-						Data->IoStatus.Status = status;
-						Data->IoStatus.Information = 0;
-					}
-					goto RepPreCreateCleanup;
+					status = STATUS_SB_TRY_REPARSE;
 				}
 				else
 				{
-					Data->IoStatus.Status = STATUS_OBJECT_NAME_NOT_FOUND;
+					Data->IoStatus.Status = status;
 					Data->IoStatus.Information = 0;
-					status = STATUS_OBJECT_NAME_NOT_FOUND;
-					goto RepPreCreateCleanup;
 				}
+				goto RepPreCreateCleanup;
 			}
 			else
 			{
@@ -676,17 +740,11 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 							Data->IoStatus.Information = 0;
 							goto RepPreCreateCleanup;
 						}
-						status = CopyFile(g_FilterHandle, &nameInfo->Name, pOutVolumeInstance, &usInnerPath, g_SbVolInstance);
-						if(!NT_SUCCESS(status))
-						{
-							Data->IoStatus.Status = status;
-							Data->IoStatus.Information = 0;
-							goto RepPreCreateCleanup;
-						}
-						else
+
+						if (OriginalDesiredAccess & DELETE)
 						{
 							status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
-							if(NT_SUCCESS(status))
+							if (NT_SUCCESS(status))
 							{
 								status = STATUS_SB_TRY_REPARSE;
 							}
@@ -697,82 +755,83 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 							}
 							goto RepPreCreateCleanup;
 						}
+						else
+						{
+							status = CopyFile(g_FilterHandle, &nameInfo->Name, pOutVolumeInstance, &usInnerPath, g_SbVolInstance);
+							if (!NT_SUCCESS(status))
+							{
+								Data->IoStatus.Status = status;
+								Data->IoStatus.Information = 0;
+								goto RepPreCreateCleanup;
+							}
+							else
+							{
+								status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
+								if (NT_SUCCESS(status))
+								{
+									status = STATUS_SB_TRY_REPARSE;
+								}
+								else
+								{
+									Data->IoStatus.Status = status;
+									Data->IoStatus.Information = 0;
+								}
+								goto RepPreCreateCleanup;
+							}
+						}
 					}
 					else
 					{
-						status = STATUS_SUCCESS;
-						goto RepPreCreateCleanup;
+						if (bCreateFile)
+						{
+							status = CopyFile(g_FilterHandle, &nameInfo->Name, pOutVolumeInstance, &usInnerPath, g_SbVolInstance);
+							if (NT_SUCCESS(status))
+							{
+								status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
+								if (NT_SUCCESS(status))
+								{
+									status = STATUS_SB_TRY_REPARSE;
+								}
+								else
+								{
+									Data->IoStatus.Status = status;
+									Data->IoStatus.Information = 0;
+								}
+								goto RepPreCreateCleanup;
+							}
+							else
+							{
+								Data->IoStatus.Status = status;
+								Data->IoStatus.Information = 0;
+								goto RepPreCreateCleanup;
+							}
+						}
+						else
+						{
+							status = STATUS_SUCCESS;
+							goto RepPreCreateCleanup;
+						}
 					}
 				}
 			}
 		}
 		else
 		{
-			if (FltIsDelFlagExist(g_FilterHandle,g_SbVolInstance,&usInnerPath))
+			if (FltIsDelFlagExist(g_FilterHandle, g_SbVolInstance, &usInnerPath))
 			{
-				if (bCreateFile)
-				{
-					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
-					if(NT_SUCCESS(status))
-					{
-						status = STATUS_SB_TRY_REPARSE;
-					}
-					else
-					{
-						Data->IoStatus.Status = status;
-						Data->IoStatus.Information = 0;
-					}
-					goto RepPreCreateCleanup;
-				}
-				else
-				{
-					Data->IoStatus.Status = STATUS_OBJECT_NAME_NOT_FOUND;
-					Data->IoStatus.Information = 0;
-					status = STATUS_OBJECT_NAME_NOT_FOUND;
-					goto RepPreCreateCleanup;
-				}
+				DeleteFile(g_FilterHandle, g_SbVolInstance, &usInnerPath);
+			}
+			status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
+			if(NT_SUCCESS(status))
+			{
+				status = STATUS_SB_TRY_REPARSE;
 			}
 			else
 			{
-				if (FltIsFileExist(g_FilterHandle,g_SbVolInstance,&usInnerPath,NULL))
-				{
-					status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
-					if(NT_SUCCESS(status))
-					{
-						status = STATUS_SB_TRY_REPARSE;
-					}
-					else
-					{
-						Data->IoStatus.Status = status;
-						Data->IoStatus.Information = 0;
-					}
-					goto RepPreCreateCleanup;
-				}
-				else
-				{
-					if (bCreateFile)
-					{
-						status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
-						if(NT_SUCCESS(status))
-						{
-							status = STATUS_SB_TRY_REPARSE;
-						}
-						else
-						{
-							Data->IoStatus.Status = status;
-							Data->IoStatus.Information = 0;
-						}
-						goto RepPreCreateCleanup;
-					}
-					else
-					{
-						Data->IoStatus.Status = STATUS_OBJECT_NAME_NOT_FOUND;
-						Data->IoStatus.Information = 0;
-						status = STATUS_OBJECT_NAME_NOT_FOUND;
-						goto RepPreCreateCleanup;
-					}
-				}
+				Data->IoStatus.Status = status;
+				Data->IoStatus.Information = 0;
 			}
+			goto RepPreCreateCleanup;
 		}
 	}
 
@@ -914,6 +973,71 @@ FLT_PREOP_CALLBACK_STATUS ProcessRename(PUNICODE_STRING pOrgNtName, PFLT_CALLBAC
 	return ret;
 }
 
+FLT_POSTOP_CALLBACK_STATUS	SbPostSetinfoCallback(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID CompletionContext, FLT_POST_OPERATION_FLAGS Flags)
+{
+	NTSTATUS					status = STATUS_SUCCESS;
+	FLT_POSTOP_CALLBACK_STATUS	returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
+	PFLT_FILE_NAME_INFORMATION	pNameInfo = NULL;
+	BOOLEAN 					IsDirectory = FALSE;
+	UNICODE_STRING				usSandBoxPath = { 0, 0, NULL };
+
+	UNREFERENCED_PARAMETER(CompletionContext);
+	UNREFERENCED_PARAMETER(Flags);
+
+	if (ShouldSkipPost(Data, FltObjects))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	status = FltIsDirectory(FltObjects->FileObject, FltObjects->Instance, &IsDirectory);
+	if (IsDirectory)
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	if (!ShouldSandBox(PsGetCurrentProcessId()))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	if (Data->Iopb->Parameters.SetFileInformation.FileInformationClass != FileDispositionInformation)
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &pNameInfo);
+	if (!NT_SUCCESS(status))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	status = FltParseFileNameInformation(pNameInfo);
+	if (!NT_SUCCESS(status))
+	{
+		returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
+		goto clean_ret;
+	}
+	if (pNameInfo->Name.Length <= 48)//wcslen(L"\\Device\\HarddiskVolume0\\")*sizeof(WCAHR)
+	{
+		returnStatus = FLT_POSTOP_FINISHED_PROCESSING;
+		goto clean_ret;
+	}
+
+	RtlInitUnicodeString(&usSandBoxPath, g_SandBoxPath);
+	if (RtlPrefixUnicodeString(&usSandBoxPath, &pNameInfo->Name, TRUE))
+	{
+		if (((PFILE_DISPOSITION_INFORMATION)(Data->Iopb->Parameters.SetFileInformation.InfoBuffer))->DeleteFile)
+		{
+			FltCreateDelFlagExist(g_FilterHandle, g_SbVolInstance, &pNameInfo->Name);
+		}
+	}
+clean_ret:
+	if (pNameInfo)
+	{
+		FltReleaseFileNameInformation(pNameInfo);
+		pNameInfo = NULL;
+	}
+	return returnStatus;
+}
+
 FLT_PREOP_CALLBACK_STATUS SbPreSetinfoCallback( PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects,PVOID *CompletionContext)
 {
 	NTSTATUS status;
@@ -931,6 +1055,8 @@ FLT_PREOP_CALLBACK_STATUS SbPreSetinfoCallback( PFLT_CALLBACK_DATA Data, PCFLT_R
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
+
+	ret = FLT_PREOP_SUCCESS_WITH_CALLBACK;
 	status = FltIsDirectory(FltObjects->FileObject, FltObjects->Instance, &IsDirectory);
 	if (IsDirectory)
 	{

@@ -8,6 +8,7 @@ NTSTATUS					SbInstanceSetup ( PCFLT_RELATED_OBJECTS FltObjects, FLT_INSTANCE_SE
 NTSTATUS					SbInitMinifilter(PDRIVER_OBJECT pDriverObj);
 void						SbUninitMinifilter();
 NTSTATUS					SbSetSandBoxPath(PVOID buf,ULONG len);
+FLT_POSTOP_CALLBACK_STATUS	SbPostSetinfoCallback(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID CompletionContext, FLT_POST_OPERATION_FLAGS Flags);
 
 NTSTATUS
 SbNormalizeNameComponentCallback(

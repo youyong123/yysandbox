@@ -453,6 +453,134 @@ BOOLEAN	 FltIsDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICOD
 	return bExist;
 }
 
+NTSTATUS FltCreateDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName)
+{
+	UNICODE_STRING			usNewName = { 0, 0, NULL };
+	WCHAR					delFlag[] = DEL_FLAGS;
+	NTSTATUS				status;
+	OBJECT_ATTRIBUTES		objAttrib = { 0 };
+	HANDLE					hFile = NULL;
+	IO_STATUS_BLOCK 		io_status = { 0 };
+
+	if (NULL == pFilter || NULL == pInstance || NULL == pFileName)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	usNewName.MaximumLength = pFileName->Length + sizeof(delFlag);
+	status = AllocateUnicodeString(&usNewName);
+	if (NT_SUCCESS(status))
+	{
+		RtlCopyUnicodeString(&usNewName, pFileName);
+		if (usNewName.Buffer[usNewName.Length / sizeof(WCHAR) - 1] == L'\\')
+		{
+			usNewName.Buffer[usNewName.Length / sizeof(WCHAR) - 1] = L'\0';
+			usNewName.Length -= sizeof(WCHAR);
+		}
+		status = RtlAppendUnicodeToString(&usNewName, delFlag);
+
+		if (NT_SUCCESS(status))
+		{
+			InitializeObjectAttributes(&objAttrib, &usNewName, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+			status = FltCreateFile(
+				pFilter,
+				pInstance,
+				&hFile,
+				SYNCHRONIZE | DELETE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES,
+				&objAttrib,
+				&io_status,
+				NULL,
+				FILE_ATTRIBUTE_NORMAL,
+				FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+				FILE_OPEN_IF,
+				FILE_SYNCHRONOUS_IO_NONALERT,
+				NULL,
+				0,
+				0
+				);
+			if (NT_SUCCESS(status))
+			{
+				FltClose(hFile);
+			}
+		}
+	}
+	FreeUnicodeString(&usNewName);
+	return status;
+}
+
+NTSTATUS DeleteFile(PFLT_FILTER	pFilter, PFLT_INSTANCE pInstance, IN PUNICODE_STRING pusFileName)
+{
+	NTSTATUS			status;
+	HANDLE				hFile = NULL;
+	OBJECT_ATTRIBUTES	fileOA;
+	IO_STATUS_BLOCK		ioSB;
+
+	if (!pFilter || !pInstance || !pusFileName)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+	InitializeObjectAttributes(
+		&fileOA,
+		pusFileName,
+		OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+		NULL,
+		NULL
+		);
+	status = FltCreateFile(
+		pFilter,
+		pInstance,
+		&hFile,
+		DELETE,
+		&fileOA,
+		&ioSB,
+		NULL,
+		FILE_ATTRIBUTE_NORMAL,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		FILE_OPEN,
+		FILE_DELETE_ON_CLOSE,
+		NULL,
+		0,
+		0
+		);
+	if (NT_SUCCESS(status))
+	{
+		FltClose(hFile);
+	}
+	return status;
+}
+
+NTSTATUS FltDeleteDelFlagExist(PFLT_FILTER	pFilter, PFLT_INSTANCE	pInstance, PUNICODE_STRING	pFileName)
+{
+	UNICODE_STRING			usNewName = { 0, 0, NULL };
+	WCHAR					delFlag[] = DEL_FLAGS;
+	NTSTATUS				status;
+
+	if (NULL == pFilter || NULL == pInstance || NULL == pFileName)
+	{
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	usNewName.MaximumLength = pFileName->Length + sizeof(delFlag);
+	status = AllocateUnicodeString(&usNewName);
+	if (NT_SUCCESS(status))
+	{
+		RtlCopyUnicodeString(&usNewName, pFileName);
+		if (usNewName.Buffer[usNewName.Length / sizeof(WCHAR) - 1] == L'\\')
+		{
+			usNewName.Buffer[usNewName.Length / sizeof(WCHAR) - 1] = L'\0';
+			usNewName.Length -= sizeof(WCHAR);
+		}
+		status = RtlAppendUnicodeToString(&usNewName, delFlag);
+
+		if (NT_SUCCESS(status))
+		{
+			status = DeleteFile(pFilter, pInstance, &usNewName);
+		}
+	}
+	FreeUnicodeString(&usNewName);
+	return status;
+}
+
 BOOLEAN  AcquireResourceExclusive(__inout PERESOURCE Resource)
 {
 	BOOLEAN ret = FALSE;
