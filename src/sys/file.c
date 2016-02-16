@@ -37,6 +37,11 @@ CONST FLT_OPERATION_REGISTRATION g_Callbacks[] =
 	(PFLT_PRE_OPERATION_CALLBACK)SbPreCreateCallback,
 	SbPostCreateCallback },
 
+	{ IRP_MJ_DIRECTORY_CONTROL,
+	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO | FLTFL_OPERATION_REGISTRATION_SKIP_CACHED_IO,
+	OnPreDirectoryControl,
+	OnPostDirectoryControl },
+
 	{ IRP_MJ_SET_INFORMATION,
 	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
 	(PFLT_PRE_OPERATION_CALLBACK)SbPreSetinfoCallback,
@@ -357,12 +362,6 @@ _Inout_ PVOID           *NormalizationContext
 		NormalizationContext);
 }
 
-
-FORCEINLINE BOOLEAN  is_dir(PWCHAR pPath) 
-{
-	return pPath[wcslen(pPath) - 1] == L'\\';
-}
-
 BOOLEAN ShouldSkipPre(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects)
 {
 	HANDLE						PID = PsGetCurrentProcessId();
@@ -614,7 +613,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	UNICODE_STRING				usSandBoxVolume = {0,0,NULL};
 	UNICODE_STRING				usInnerPath = {0,0,NULL};
 	ACCESS_MASK					OriginalDesiredAccess = Data->Iopb->Parameters.Create.SecurityContext->AccessState->OriginalDesiredAccess;
-//	ULONG						CreateOptions = Data->Iopb->Parameters.Create.Options & 0x00ffffff;
+	//ULONG						CreateOptions = Data->Iopb->Parameters.Create.Options & 0x00ffffff;
 	UCHAR						CreateDisposition = (UCHAR)(((Data->Iopb->Parameters.Create.Options) >> 24) & 0xFF);
 	BOOLEAN						bCreateFile	= FALSE;
 	BOOLEAN						bModifyFile	= FALSE;
@@ -636,6 +635,7 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 	{
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
+	
 	status = FltGetInstanceContext(FltObjects->Instance, &pInstCtx);
 	if (!NT_SUCCESS(status) || pInstCtx == NULL)
 	{
@@ -733,15 +733,22 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 				{
 					if (bModifyFile)
 					{
-						status = SbIsDirectory(NULL, &nameInfo->Name, FltObjects->Filter, pOutVolumeInstance, &bDir);
-						if(!NT_SUCCESS(status))
+						FltIsFileExist(g_FilterHandle, pOutVolumeInstance, &nameInfo->Name, &bDir);
+						if (bDir)
 						{
 							Data->IoStatus.Status = status;
 							Data->IoStatus.Information = 0;
 							goto RepPreCreateCleanup;
 						}
 
-						if (OriginalDesiredAccess & DELETE)
+						status = CopyFile(g_FilterHandle, &nameInfo->Name, pOutVolumeInstance, &usInnerPath, g_SbVolInstance);
+						if (!NT_SUCCESS(status))
+						{
+							Data->IoStatus.Status = status;
+							Data->IoStatus.Information = 0;
+							goto RepPreCreateCleanup;
+						}
+						else
 						{
 							status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
 							if (NT_SUCCESS(status))
@@ -754,30 +761,6 @@ FLT_PREOP_CALLBACK_STATUS SbPreCreateCallback( PFLT_CALLBACK_DATA Data,PCFLT_REL
 								Data->IoStatus.Information = 0;
 							}
 							goto RepPreCreateCleanup;
-						}
-						else
-						{
-							status = CopyFile(g_FilterHandle, &nameInfo->Name, pOutVolumeInstance, &usInnerPath, g_SbVolInstance);
-							if (!NT_SUCCESS(status))
-							{
-								Data->IoStatus.Status = status;
-								Data->IoStatus.Information = 0;
-								goto RepPreCreateCleanup;
-							}
-							else
-							{
-								status = IoReplaceFileObjectName(Data->Iopb->TargetFileObject, usInnerPath.Buffer, usInnerPath.Length);
-								if (NT_SUCCESS(status))
-								{
-									status = STATUS_SB_TRY_REPARSE;
-								}
-								else
-								{
-									Data->IoStatus.Status = status;
-									Data->IoStatus.Information = 0;
-								}
-								goto RepPreCreateCleanup;
-							}
 						}
 					}
 					else
@@ -906,6 +889,8 @@ FLT_PREOP_CALLBACK_STATUS ProcessRename(PUNICODE_STRING pOrgNtName, PFLT_CALLBAC
 			status = ResolveDosPathToNtPath(&usDosPath, &usNtPath);
 			if (NT_SUCCESS(status))
 			{
+				CreateSbDirectoryByOutNtPath(g_FilterHandle, FltObjects->Instance, g_SbVolInstance, &usNtPath, &usSandBoxPath);
+
 				status = SbConvertToSbName(&usSandBoxPath, &usNtPath, &usDestNtPath, NULL);
 				if (NT_SUCCESS(status))
 				{
@@ -1114,6 +1099,139 @@ clean_ret:
 	}
 	return ret;
 }
+
+FLT_PREOP_CALLBACK_STATUS
+OnPreDirectoryControl(
+PFLT_CALLBACK_DATA Data,
+PCFLT_RELATED_OBJECTS FltObjects,
+PVOID *CompletionContext
+)
+{
+	if (ShouldSkipPre(Data, FltObjects))
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	if (!ShouldSandBox(PsGetCurrentProcessId()))
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	if (Data->Iopb->MinorFunction != IRP_MN_QUERY_DIRECTORY)
+	{
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+
+	switch (Data->Iopb->Parameters.DirectoryControl.QueryDirectory.FileInformationClass)
+	{
+	case FileIdFullDirectoryInformation:
+	case FileIdBothDirectoryInformation: //vista
+	case FileBothDirectoryInformation:  //xp
+	case FileDirectoryInformation:
+	case FileFullDirectoryInformation:
+	case FileNamesInformation:
+		break;
+
+	default:
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+	return FLT_PREOP_SUCCESS_WITH_CALLBACK;
+}
+FLT_POSTOP_CALLBACK_STATUS
+OnPostDirectoryControl(
+PFLT_CALLBACK_DATA Data,
+PCFLT_RELATED_OBJECTS FltObjects,
+PVOID CompletionContext,
+FLT_POST_OPERATION_FLAGS Flags
+)
+{
+	WCHAR* pDirName = NULL;
+	NTSTATUS status = 0;
+	HANDLE	PID = PsGetCurrentProcessId();
+	PFLT_FILE_NAME_INFORMATION nameInfo = NULL;
+	BOOLEAN	IsDirectory = FALSE;
+	FILE_ID_BOTH_DIR_INFORMATION* pBuf = NULL;
+	UNREFERENCED_PARAMETER(Flags);
+	UNREFERENCED_PARAMETER(CompletionContext);
+	UNREFERENCED_PARAMETER(FltObjects);
+
+	if (ShouldSkipPost(Data, FltObjects))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	if (!ShouldSandBox(PID))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	status = FltIsDirectory(FltObjects->FileObject, FltObjects->Instance, &IsDirectory);
+	if (!IsDirectory)
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	status = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_DEFAULT, &nameInfo);
+
+	if (!NT_SUCCESS(status))
+	{
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+
+	pDirName = ExAllocatePoolWithTag(PagedPool, sizeof(WCHAR)*LONG_NAME_LEN, 'FILE');
+	if (!pDirName)
+	{
+		FltReleaseFileNameInformation(nameInfo);
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	FltParseFileNameInformation(nameInfo);
+	if (nameInfo->Name.Length >= LONG_NAME_LEN*sizeof(WCHAR))
+	{
+		ExFreePool(pDirName);
+		FltReleaseFileNameInformation(nameInfo);
+		return FLT_POSTOP_FINISHED_PROCESSING;
+	}
+	StringCchCopyNW(pDirName, LONG_NAME_LEN, nameInfo->Name.Buffer, nameInfo->Name.Length / sizeof(WCHAR));
+	FltReleaseFileNameInformation(nameInfo);
+	switch (Data->Iopb->Parameters.DirectoryControl.QueryDirectory.FileInformationClass)
+	{
+	case FileDirectoryInformation:
+		//FileDirectoryInformation_HideFiles(Data, pDirName);
+		break;
+	case FileFullDirectoryInformation:
+		//FileFullDirectoryInformation_HideFiles(Data, pDirName);
+		break;
+	case FileNamesInformation:
+		//FileNamesInformation_HideFiles(Data, pDirName);
+		break;
+	case FileBothDirectoryInformation:
+		//FileBothDirectoryInformation_HideFiles(Data, pDirName);
+		break;
+	case FileIdBothDirectoryInformation:
+	{
+
+	
+		PCUNICODE_STRING name = NULL;
+		ULONG	len = 0;
+		//ExFreePool(Data->Iopb->Parameters.DirectoryControl.QueryDirectory);
+		pBuf = Data->Iopb->Parameters.DirectoryControl.QueryDirectory.DirectoryBuffer;
+		name = Data->Iopb->Parameters.DirectoryControl.QueryDirectory.FileName;
+		len = Data->Iopb->Parameters.DirectoryControl.QueryDirectory.Length;
+	}
+		//Data->IoStatus.Status = STATUS_NO_MORE_ENTRIES;
+		//FileIdBothDirectoryInformation_HideFiles(Data, pDirName);
+		break;
+	case FileIdFullDirectoryInformation:
+		//FileIdFullDirectoryInformation_HideFiles(Data, pDirName);
+		break;
+	default:
+		NT_ASSERT(FALSE);
+	}
+	if (pDirName)
+	{
+		ExFreePool(pDirName);
+	}
+	return FLT_POSTOP_FINISHED_PROCESSING;
+}
+
 
 NTSTATUS SbInitMinifilter(PDRIVER_OBJECT DriverObject)
 {

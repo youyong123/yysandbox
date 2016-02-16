@@ -35,14 +35,6 @@ IN PFLT_FILTER		pFilter,
 IN PUNICODE_STRING	pVolumeName
 );
 
-NTSTATUS
-SbIsDirectory(
-IN PFILE_OBJECT fileObject,
-IN PUNICODE_STRING dirName,
-IN PFLT_FILTER filter,
-IN PFLT_INSTANCE instance,
-OUT BOOLEAN* directory
-);
 
 BOOLEAN AcquireResourceExclusive(__inout PERESOURCE Resource);
 BOOLEAN AcquireResourceShare(__inout PERESOURCE Resource);

@@ -10,6 +10,21 @@ void						SbUninitMinifilter();
 NTSTATUS					SbSetSandBoxPath(PVOID buf,ULONG len);
 FLT_POSTOP_CALLBACK_STATUS	SbPostSetinfoCallback(PFLT_CALLBACK_DATA Data, PCFLT_RELATED_OBJECTS FltObjects, PVOID CompletionContext, FLT_POST_OPERATION_FLAGS Flags);
 
+FLT_POSTOP_CALLBACK_STATUS
+OnPostDirectoryControl(
+PFLT_CALLBACK_DATA Data,
+PCFLT_RELATED_OBJECTS FltObjects,
+PVOID CompletionContext,
+FLT_POST_OPERATION_FLAGS Flags
+);
+
+FLT_PREOP_CALLBACK_STATUS
+OnPreDirectoryControl(
+PFLT_CALLBACK_DATA Data,
+PCFLT_RELATED_OBJECTS FltObjects,
+PVOID *CompletionContext
+);
+
 NTSTATUS
 SbNormalizeNameComponentCallback(
 _In_     PFLT_INSTANCE            Instance,

@@ -1,7 +1,5 @@
 #pragma once
 
-//#define		MAXPATHLEN         300        // 文件|进程|注册表最大长度
-//#define		MAXNAMELEN         64         // 用户名最大长度
 #define		LONG_NAME_LEN		300
 #define		SHORT_NAME_LEN		64
 #define		DRIVER_LETTER_LEN	8
