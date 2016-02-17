@@ -162,6 +162,7 @@ OUT	PBOOLEAN		bDirectory
 	{
 		if (bDirectory)
 		{
+			*bDirectory = FALSE;
 			ntStatus = ObReferenceObjectByHandle(hFile, GENERIC_READ | GENERIC_WRITE, *IoFileObjectType, KernelMode, (PVOID*)&pFileObj, NULL);
 			if (NT_SUCCESS(ntStatus))
 			{
@@ -1478,6 +1479,60 @@ IN PUNICODE_STRING	pSandboxPath
 }
 
 
+
+static PFLT_FILTER		g_Filter;
+static PFLT_INSTANCE	g_pInstanceSrc;
+static PFLT_INSTANCE	g_pInstanceDst;
+static PUNICODE_STRING	g_FileNameSrc;
+static PUNICODE_STRING	g_FileNameDst;
+
+void  ProcessFile(PUNICODE_STRING FileName, BOOLEAN bDirectory)
+{
+	UNICODE_STRING	DestFile = { 0, 0, NULL };
+	UNICODE_STRING	TmpFile = { 0, 0, NULL };
+	NTSTATUS		status = 0;
+	if (g_FileNameSrc->Buffer[g_FileNameSrc->Length / sizeof(WCHAR) - 1] == L'\\')
+	{
+		TmpFile.Length = TmpFile.MaximumLength = FileName->Length - g_FileNameSrc->Length+2;
+		TmpFile.Buffer = FileName->Buffer + (g_FileNameSrc->Length-2)/sizeof(WCHAR);
+	}
+	else
+	{
+		TmpFile.Length = TmpFile.MaximumLength = FileName->Length - g_FileNameSrc->Length;
+		TmpFile.Buffer = FileName->Buffer + g_FileNameSrc->Length / sizeof(WCHAR);
+	}
+	
+	DestFile.Length = DestFile.MaximumLength = FileName->Length - g_FileNameSrc->Length + 4 + g_FileNameDst->Length;
+	status = AllocateUnicodeString(&DestFile);
+	if (NT_SUCCESS(status))
+	{
+		RtlCopyUnicodeString(&DestFile, g_FileNameDst);
+		RtlAppendUnicodeStringToString(&DestFile, &TmpFile);
+		if (bDirectory)
+		{
+			FltCreateDirectory(g_Filter, g_pInstanceDst, &DestFile);
+		}
+		else
+		{
+			CopyFile(g_Filter, FileName, g_pInstanceSrc, &DestFile, g_pInstanceDst);
+		}
+		FreeUnicodeString(&DestFile);
+	}
+}
+
+
+NTSTATUS CopyDirectory(PFLT_FILTER Filter, IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2)
+{
+	ULONG	FileCount = 0;
+	g_Filter = Filter;
+	g_pInstanceSrc = pInstance1;
+	g_pInstanceDst = pInstance2;
+	g_FileNameSrc = pusFileName1;
+	g_FileNameDst = pusFileName2;
+	EnumDirectory(Filter, pInstance1, pusFileName1, &FileCount, ProcessFile);
+	return STATUS_SUCCESS;
+}
+
 NTSTATUS CopyFile(PFLT_FILTER Filter,IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2)
 {
 	NTSTATUS			status;
@@ -1627,4 +1682,128 @@ NTSTATUS CopyFile(PFLT_FILTER Filter,IN PUNICODE_STRING pusFileName1, PFLT_INSTA
 		FltClose(hFile1);
 	}
 	return status;
+}
+
+void EnumDirectory(PFLT_FILTER Filter, PFLT_INSTANCE pIns, PUNICODE_STRING pDirName, ULONG* FileCount, PProcessFile procFile)
+{
+	OBJECT_ATTRIBUTES                	objAttributes = { 0 };
+	IO_STATUS_BLOCK                    	iosb = { 0 };
+	NTSTATUS							status = STATUS_SUCCESS;
+	HANDLE								hFile = NULL;
+	PFILE_OBJECT						pFileObject = NULL;
+	char*								pBuffer = NULL;
+	ULONG								Length = 0;
+	FILE_DIRECTORY_INFORMATION*			pDirInfo = NULL;
+
+	if (*FileCount >=1000)
+	{
+		return;
+	}
+	if (procFile)
+	{
+		procFile(pDirName, TRUE);
+	}
+	InitializeObjectAttributes(&objAttributes, pDirName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+	status = FltCreateFile(Filter,
+		pIns,
+		&hFile,
+		FILE_LIST_DIRECTORY | SYNCHRONIZE,
+		&objAttributes,
+		&iosb,
+		NULL,
+		FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_NORMAL,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		FILE_OPEN,
+		FILE_DIRECTORY_FILE,
+		NULL,
+		0,
+		IO_IGNORE_SHARE_ACCESS_CHECK);
+	if (NT_SUCCESS(status))
+	{
+		status = ObReferenceObjectByHandle(hFile,
+			FILE_LIST_DIRECTORY | SYNCHRONIZE,
+			*IoFileObjectType,
+			KernelMode,
+			&pFileObject,
+			NULL);
+		if (NT_SUCCESS(status))
+		{
+			pBuffer = ExAllocatePoolWithTag(PagedPool, 2048, 'enum');
+			if (pBuffer)
+			{
+				BOOLEAN RestartScan = TRUE;
+				while (status != STATUS_NO_MORE_FILES)
+				{
+					status = FltQueryDirectoryFile(pIns, pFileObject, pBuffer, 2048, FileDirectoryInformation, FALSE, NULL, RestartScan, &Length);
+					RestartScan = FALSE;
+					if (NT_SUCCESS(status))
+					{
+						pDirInfo = (FILE_DIRECTORY_INFORMATION*)pBuffer;
+						do
+						{
+							UNICODE_STRING	SubFile = { 0, 0, NULL };
+							UNICODE_STRING	File = { 0,0,NULL };
+							NTSTATUS		status1;
+
+							DECLARE_UNICODE_STRING(Dot1, L".");
+							DECLARE_UNICODE_STRING(Dot2, L"..");
+
+							File.Length = File.MaximumLength = (USHORT)pDirInfo->FileNameLength;
+							File.Buffer = pDirInfo->FileName;
+							if (!RtlEqualUnicodeString(&File, &Dot1, TRUE) && !RtlEqualUnicodeString(&File, &Dot2, TRUE))
+							{
+								SubFile.MaximumLength = (USHORT)pDirInfo->FileNameLength + pDirName->MaximumLength + sizeof(WCHAR) * 2;
+
+								status1 = AllocateUnicodeString(&SubFile);
+								if (NT_SUCCESS(status1))
+								{
+									RtlCopyUnicodeString(&SubFile, pDirName);
+									if (SubFile.Buffer[SubFile.Length/sizeof(WCHAR)-1] != L'\\')
+									{
+										RtlAppendUnicodeToString(&SubFile, L"\\");
+									}
+									RtlAppendUnicodeStringToString(&SubFile, &File);
+									if (SubFile.Buffer[SubFile.Length / sizeof(WCHAR) - 1] == L'\\')
+									{
+										SubFile.Buffer[SubFile.Length / sizeof(WCHAR) - 1] = L'\0';
+									}
+									if (SubFile.Length <= 600)
+									{
+										*FileCount = *FileCount + 1;
+
+										if (pDirInfo->FileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+										{
+											EnumDirectory(Filter, pIns, &SubFile, FileCount,procFile);
+										}
+										else
+										{
+											if (procFile)
+											{
+												procFile(&SubFile, FALSE);
+											}
+										}
+									}
+									FreeUnicodeString(&SubFile);
+								}
+							}
+							if (pDirInfo->NextEntryOffset == 0)
+							{
+								break;
+							}
+							pDirInfo = (FILE_DIRECTORY_INFORMATION*)(pDirInfo->NextEntryOffset + (char*)pDirInfo);
+						} while (pDirInfo);
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				ExFreePool(pBuffer);
+			}
+			ObDereferenceObject(pFileObject);
+		}
+		FltClose(hFile);
+	}
 }

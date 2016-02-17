@@ -3,6 +3,8 @@
 
 #pragma warning( disable:4127 4305 4100 4201)
 
+typedef void(__stdcall *PProcessFile)(PUNICODE_STRING FileName, BOOLEAN bDirectory);
+
 VOID		SleepImp(__int64 ReqInterval);
 PWCHAR		GetProcNameByPid(IN  HANDLE   dwProcessId, PWCHAR pPath);
 NTSTATUS	AllocateUnicodeString(PUNICODE_STRING String);
@@ -90,6 +92,13 @@ OUT PUNICODE_STRING			pDstName,
 IN WCHAR*			pVolName
 );
 
+NTSTATUS
+FltCreateDirectory(
+IN PFLT_FILTER		pFilter,
+IN PFLT_INSTANCE	pInstance,
+IN PUNICODE_STRING	pDirectory
+);
+
 BOOLEAN GetDriveLetter(PCFLT_RELATED_OBJECTS FltObjects, PWCHAR pBuffer, ULONG bufferLength);
 NTSTATUS NtRenameFile(WCHAR *szFileName, WCHAR *szNewFileName, BOOLEAN ReplaceIfExists, HANDLE RootDirectory);
 
@@ -137,5 +146,9 @@ IN PUNICODE_STRING	pSandboxPath
 NTSTATUS DeleteFile(PFLT_FILTER	pFilter, PFLT_INSTANCE pInstance, IN PUNICODE_STRING pusFileName);
 
 NTSTATUS CopyFile(PFLT_FILTER Filter, IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2);
+
+NTSTATUS CopyDirectory(PFLT_FILTER Filter, IN PUNICODE_STRING pusFileName1, PFLT_INSTANCE	pInstance1, IN PUNICODE_STRING pusFileName2, PFLT_INSTANCE	pInstance2);
+
+void EnumDirectory(PFLT_FILTER Filter, PFLT_INSTANCE pIns, PUNICODE_STRING pDirName, ULONG* FileCount, PProcessFile procFile);
 
 #endif 
